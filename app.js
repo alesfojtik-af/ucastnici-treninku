@@ -88,7 +88,7 @@ function stats(d) {
   const n = sAno.length + zAno.length, cap = +C().cap || 99, free = cap - n;
   const tr = n ? Math.ceil(trCost() / n) : 0;
   const ctRaw = n && court() ? Math.ceil(court() / n / 10) * 10 : 0;
-  const ct = ctRaw ? Math.max(ctRaw, +C().minCt || 0) : 0, prep = inPrep(d);
+  const ct = ctRaw, prep = inPrep(d);
   const ahead = p => { const i = zQ.indexOf(p); return i < 0 ? zChci : zChci.filter(q => zQ.indexOf(q) < i); };
   const canAno = p => free > 0 && (p.g === "s" || !priorityActive(d) || ahead(p).length < free);
   return { a, sAno, sOpen, zQ, zAno, zChci, n, cap, free, tr, ct, ctRaw, prep, ahead, canAno,
@@ -240,7 +240,8 @@ function weekCard(d, label, isNow) {
     <div class="courts" aria-hidden="true">${bars.join("")}</div>${alert}
     <div class="grp"><span>Ty</span><span>${m.g === "s" ? "stálý" : "záskok"}</span></div>${row(m)}
     <div class="grp" style="margin-top:6px"><span>Stálí${C().model === "prepay" ? " (předplacený " + esc(ctName().toLowerCase()) + ")" : ""}</span><span class="num">${s.sAno.length}× ANO</span></div>${st.map(row).join("")}
-    <div class="grp" style="margin-top:6px"><span>Záskoky</span><span class="num">${s.zAno.length}× ANO · ${s.zChci.length}× šel bych</span></div>${zs.map(row).join("")}
+    <div class="grp" style="margin-top:6px"><span>Záskoky (legenda níže)</span><span class="num">${s.zAno.length}× ANO · ${s.zChci.length}× šel bych</span></div>${zs.map(row).join("")}
+    <p class="legend"><b>Legenda:</b> Pro zájem o účast klikni „Šel bych“, zaznamená se pořadí. Jakmile je volné místo ze stálých, zvol ANO. Přednost má ten, kdo byl dřív v „Šel bych“.</p>
     ${C().tr?.on ? `<div class="week-f"><label for="cash-${d}">Cash přinese</label><select id="cash-${d}" data-cash="${d}">${cashOpts}</select>
       <button class="btn small" data-gopay="${d}">Platba →</button></div>` : `<div class="week-f"><button class="btn small" data-gopay="${d}">Platba →</button></div>`}
   </article>`;
@@ -275,7 +276,9 @@ function renderPay() {
       ${tc ? `<div class="kpi"><small>${esc(trName())} / os.</small><b class="num">${s.n ? kc(s.tr) : "—"}</b><span>platí všichni</span></div>` : ""}
       ${c ? `<div class="kpi"><small>${esc(ctName())} / ${s.prep ? "záskok" : "hráč"}</small><b class="num">${s.n ? kc(s.ct) : "—"}</b><span>${s.prep ? "stálí mají předplaceno" : "platí všichni"}</span></div>` : ""}
     </div>
-    <div class="calc num">${!s.n ? "Zatím nikdo nepotvrdil ANO." : [tc ? `${kc(tc)} ÷ ${s.n} = ${(tc / s.n).toFixed(2).replace(".", ",")} → nahoru na Kč` : "", c ? `${kc(c)} ÷ ${s.n} = ${(c / s.n).toFixed(2).replace(".", ",")} → nahoru na desetikoruny${s.ct > s.ctRaw ? ` = ${kc(s.ctRaw)}, ale minimum je ${kc(C().minCt)}` : ""}` : ""].filter(Boolean).join(" · ")}</div>
+    <div class="calc num">${!s.n ? "Zatím nikdo nepotvrdil ANO." : [
+      tc ? `<div><b>${esc(trName())}:</b> ${kc(tc)} ÷ ${s.n} ${plural(s.n, "hráč", "hráči", "hráčů")} = ${(tc / s.n).toFixed(2).replace(".", ",")} Kč, zaokrouhleno nahoru na koruny = <b>${kc(s.tr)}</b> na každého.</div>` : "",
+      c ? `<div><b>${esc(ctName())}:</b> ${kc(c)} ÷ ${s.n} ${plural(s.n, "hráč", "hráči", "hráčů")} = ${(c / s.n).toFixed(2).replace(".", ",")} Kč, zaokrouhleno nahoru na desetikoruny = <b>${kc(s.ct)}</b> ${s.prep ? "na každého záskoka. Stálí mají kurt předplacený." : "na každého hráče."}</div>` : ""].join("")}</div>
   </div>
   ${tc ? `<div class="panel cashp"><h2>${esc(trName())}: hotově</h2>
     ${cp ? `<div class="cashrow">${avatar(cp, 44)}<div><b>${esc(cp.n)}</b> přinese ${kc(tc)} hotově a zaplatí.<br><span class="sub">Ostatní pošlou po <b class="num">${kc(s.tr)}</b> přes QR, které ${esc(cp.n)} dá do WhatsApp skupiny.</span></div></div>
@@ -296,9 +299,9 @@ function renderPay() {
     </tbody><tfoot><tr><td>Vybráno</td>${tc ? `<td class="r">${kc(sumTr)}</td>` : ""}${c ? `<td class="r">${kc(sumCt)}</td>` : ""}<td class="r">${kc(sumTr + sumCt)}</td></tr></tfoot></table></div>
   </div>
   ${c && C().iban ? `<div class="panel"><h2>QR platba: ${esc(ctName().toLowerCase())}</h2>
-    <p class="sub">${s.prep ? "Pro záskoky." : "Pro všechny hráče."} Částka se dopočítá podle počtu hráčů${C().minCt ? `, nejméně ${kc(C().minCt)}` : ""}.</p>
-    <div class="qrwrap"><div class="qr">${qrSvg(spd(s.ct || +C().minCt || 0))}</div>
-      <div class="qrinfo"><b class="num">${kc(s.ct || +C().minCt || 0)}</b><span>Zpráva: <i>${esc(C().msg)}</i></span>
+    <p class="sub">${s.prep ? "Pro záskoky." : "Pro všechny hráče."} Částka se dopočítá podle počtu hráčů.</p>
+    <div class="qrwrap"><div class="qr">${qrSvg(spd(s.ct))}</div>
+      <div class="qrinfo"><b class="num">${kc(s.ct)}</b><span>Zpráva: <i>${esc(C().msg)}</i></span>
         <span class="acc">${esc(C().iban).replace(/(.{4})/g, "$1 ").trim()}</span>
         <button class="btn ghost small" id="copyAcc" style="align-self:flex-start">Kopírovat číslo účtu</button></div></div></div>` : ""}
   ${ds.length > 1 ? seasonPanel() : ""}`;
@@ -330,7 +333,7 @@ function renderPeople() {
        <button class="iconbtn" data-move="${p.id}" title="${g === "s" ? "Přesunout mezi záskoky" : "Přesunout mezi stálé"}" aria-label="Přesunout ${esc(p.n)}">⇅</button>
        <button class="iconbtn" data-askdel="${p.id}" aria-label="Odebrat ${esc(p.n)}">✕</button>`}
     </div>
-    ${pickFor === p.id ? `<div class="picker" role="group" aria-label="Ikonky">${FACES.map((_, i) => `<button class="face ${p.av === i ? "sel" : ""}" data-face="${i}" data-for="${p.id}" aria-label="Ikonka ${i + 1}">${face(i)}</button>`).join("")}</div>` : ""}`).join("")}</div>`;
+    ${pickFor === p.id ? `<div class="picker" role="group" aria-label="Ikonky">${[...Array(AV_COUNT).keys()].map(i => `<button class="face ${p.av === i ? "sel" : ""}" data-face="${i}" data-for="${p.id}" aria-label="Ikonka ${i + 1}">${face(i)}</button>`).join("")}</div>` : ""}`).join("")}</div>`;
   };
   $("#s-people").innerHTML = `<div class="panel"><h2>Přidat hráče</h2><p class="sub">Přidat může kdokoli ze skupiny.</p>
     <form class="addform" id="addForm"><input id="newName" placeholder="Jméno nebo přezdívka" aria-label="Jméno" required maxlength="40">
@@ -373,7 +376,6 @@ function renderSettings() {
       <div class="costrow"><input value="${esc(c.ct?.name)}" data-cf="ct.name" aria-label="Název položky 2"><input type="number" value="${esc(c.ct?.hour)}" data-cf="ct.hour" aria-label="Cena za hodinu"><label class="sw"><input type="checkbox" data-cf="ct.on" ${c.ct?.on ? "checked" : ""}> zapnuto</label></div></div>
     ${f("ct.hours", "Délka", "hodin", c.ct?.hours, "h", 0.5)}
     <div class="field"><label>Za termín<small>cena × délka</small></label><b class="num" style="text-align:right">${kc(court())}</b></div>
-    ${f("minCt", "Minimum za položku 2", "na hráče, i když vyjde méně", c.minCt, "Kč")}
     <div class="field wide"><label for="cf-skin">Vzhled</label><select id="cf-skin" data-cf="skin"><option value="beach" ${c.skin === "beach" ? "selected" : ""}>Beach</option><option value="tenis" ${c.skin === "tenis" ? "selected" : ""}>Tenis</option><option value="obecne" ${c.skin === "obecne" ? "selected" : ""}>Obecný</option></select></div>
   </div>
   ${c.model === "prepay" ? `<div class="panel"><h2>Předplacené období</h2><p class="sub">V tomto období stálí ${esc(ctName().toLowerCase())} neplatí, protože ho zaplatili dopředu. Mimo něj se dělí mezi všechny.</p>
@@ -535,7 +537,7 @@ document.addEventListener("submit", async e => {
     const v = id => $("#" + id)?.value?.trim() || "";
     const cfg = { type: ngType, title: v("ng-n"), coach: "", place: v("ng-where"), season: "", time: v("ng-time"), end: v("ng-end"), cap: +v("ng-cap") || 12,
       model: v("ng-model"), tr: { name: v("ng-trn") || "Trenér", price: +v("ng-trp") || 0, on: $("#ng-tro").checked },
-      ct: { name: v("ng-ctn") || "Kurt", hour: +v("ng-ctp") || 0, hours: 1.5, on: $("#ng-cto").checked }, minCt: 0,
+      ct: { name: v("ng-ctn") || "Kurt", hour: +v("ng-ctp") || 0, hours: 1.5, on: $("#ng-cto").checked },
       prepFrom: "", prepTo: "", prepay: 0, iban: "", msg: "", skin: v("ng-skin") };
     if (ngType === "week") Object.assign(cfg, { dow: v("ng-dow"), start: v("ng-start"), weeks: +v("ng-weeks") || 16, prepFrom: v("ng-start") });
     else cfg.date = v("ng-date");

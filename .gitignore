@@ -1,0 +1,3 @@
+*.local.sql
+seed-*.sql
+.DS_Store

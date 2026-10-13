@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0B7A86">
+<title>Účastníci tréninku</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Ccircle cx='24' cy='24' r='20' fill='%23F4A51C'/%3E%3Cpath d='M8 26Q24 14 40 26M24 4Q16 24 24 44M12 38Q26 30 38 38' fill='none' stroke='%230B7A86' stroke-width='3'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Figtree:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js" defer></script>
+<script src="config.js" defer></script>
+<script src="faces.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<div class="app" data-skin="beach">
+  <header class="hero">
+    <svg class="deco" viewBox="0 0 150 110" aria-hidden="true">
+      <circle cx="112" cy="36" r="22" fill="var(--sun)"/>
+      <line x1="10" y1="104" x2="10" y2="44" stroke="var(--ink)" stroke-width="2.5"/>
+      <line x1="146" y1="104" x2="146" y2="44" stroke="var(--ink)" stroke-width="2.5"/>
+      <rect x="10" y="46" width="136" height="20" fill="none" stroke="var(--ink)" stroke-width="1.2"/>
+      <g stroke="var(--ink)" stroke-width=".6" opacity=".55">
+        <line x1="10" y1="52" x2="146" y2="52"/><line x1="10" y1="58" x2="146" y2="58"/><line x1="10" y1="63" x2="146" y2="63"/>
+        <line x1="24" y1="46" x2="24" y2="66"/><line x1="38" y1="46" x2="38" y2="66"/><line x1="52" y1="46" x2="52" y2="66"/><line x1="66" y1="46" x2="66" y2="66"/><line x1="80" y1="46" x2="80" y2="66"/><line x1="94" y1="46" x2="94" y2="66"/><line x1="108" y1="46" x2="108" y2="66"/><line x1="122" y1="46" x2="122" y2="66"/><line x1="136" y1="46" x2="136" y2="66"/>
+      </g>
+      <rect x="10" y="44" width="136" height="3" fill="var(--card)" stroke="var(--ink)" stroke-width="1"/>
+      <circle cx="60" cy="22" r="10" fill="var(--card)" stroke="var(--ink)" stroke-width="1.5"/>
+      <path d="M50 22 Q60 14 70 22 M60 12 Q55 22 60 32 M52 28 Q62 24 68 30" fill="none" stroke="var(--sea)" stroke-width="1.5"/>
+    </svg>
+    <div class="grpsw" id="grpsw" hidden><label for="grp" class="kicker">Skupina</label><select id="grp"></select></div>
+    <div class="kicker" id="kicker" style="color:var(--muted)"></div>
+    <h1 id="title">Účastníci tréninku</h1>
+    <div class="coach" id="coach"></div>
+    <div class="meta" id="meta"></div>
+    <div class="who" id="who" hidden><span id="meAv"></span><label for="me">Jsem:</label><select id="me"></select><span class="tag" id="roleTag"></span></div>
+  </header>
+
+  <div class="weeknav" id="weeknav" hidden>
+    <button class="arrow" id="prev" aria-label="O týden zpět">‹</button>
+    <div class="lbl"><span id="rangeLbl"></span><small><button class="today" id="todayBtn">Zpět na tento týden</button></small></div>
+    <button class="arrow" id="next" aria-label="O týden dopředu">›</button>
+  </div>
+
+  <main>
+    <section class="screen" id="s-loading"><div class="panel"><p class="sub" style="margin:0">Načítám…</p></div></section>
+    <section class="screen" id="s-home" hidden></section>
+    <section class="screen" id="s-pick" hidden></section>
+    <section class="screen" id="s-week" hidden></section>
+    <section class="screen" id="s-pay" hidden></section>
+    <section class="screen" id="s-people" hidden></section>
+    <section class="screen" id="s-settings" hidden></section>
+    <section class="screen" id="s-new" hidden></section>
+  </main>
+
+  <nav class="tabs" id="tabs" aria-label="Obrazovky" hidden><div class="in">
+    <button data-tab="week" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>Týden</button>
+    <button data-tab="pay"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3"/></svg>Platba</button>
+    <button data-tab="people"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M17 14.5c2.3 0 4 1.5 4.6 4"/></svg>Lidé</button>
+    <button data-tab="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>Nastavení</button>
+  </div></nav>
+  <div class="toast" id="toast" role="status" hidden></div>
+</div>
+</body>
+</html>

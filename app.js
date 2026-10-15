@@ -30,6 +30,7 @@ let D = null;            // data skupiny z app_get
 let att = {}, cash = {}; // att[den][osoba] = {st, ts}; cash[den] = osoba
 let tab = "week", idx = 0, payDay = null, confirmDel = null, pickFor = null, addG = "z", ngType = "week";
 let superData = null, busy = false;
+let wa = null, waConfirm = null; // wa = záznamy odeslaných/ignorovaných zpráv (null = migrace 002 ještě neběžela)
 const DAY = 864e5;
 
 const $ = s => document.querySelector(s);
@@ -113,6 +114,8 @@ async function load() {
   for (const x of D.att) (att[x.d] ||= {})[x.p] = { st: x.st, ts: x.ts };
   for (const x of D.days) cash[x.d] = x.cash;
   rememberGroup(slug, D.group.name, "active");
+  try { wa = await api("app_wa_get", { p_slug: slug }); } catch { wa = null; }
+  if (superPin()) try { const r = await api("super_list", { p_pin: superPin() }); if (r.ok) superData = r; } catch {}
 }
 async function refresh() {
   if (!slug || busy) return;
@@ -160,9 +163,8 @@ function renderChrome() {
     $("#meAv").innerHTML = avatar(me(), 30);
     $("#roleTag").textContent = superPin() ? "správce" : isGroupAdmin() ? "admin" : me().g === "s" ? "stálý" : "záskok";
   }
-  const sb = document.querySelector('[data-tab="settings"]');
-  sb.hidden = !canSettings();
-  $(".tabs .in").style.gridTemplateColumns = `repeat(${canSettings() ? 4 : 3},1fr)`;
+  const badge = waCards().length + (superPin() && superData ? superData.groups.filter(g => g.status === "pending").length : 0);
+  $("#msgDot").textContent = badge; $("#msgDot").hidden = !badge;
   document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-current", b.dataset.tab === tab ? "page" : "false"));
   const ds = days(), multi = ds.length > 1;
   $("#weeknav").hidden = tab !== "week" || !multi || !me();
@@ -183,7 +185,6 @@ function render() {
   if (D.missing) { show("home"); renderHome("Skupina s tímto odkazem neexistuje. Zkontrolujte odkaz od organizátora."); return; }
   if (D.group.status !== "active") { show("home"); renderHome(D.group.status === "pending" ? `Skupina „${esc(D.group.name)}“ čeká na schválení správcem. Tento odkaz si uložte, po schválení začne fungovat.` : `Žádost o skupinu „${esc(D.group.name)}“ byla zamítnuta.`); return; }
   if (!me()) { show("pick"); renderPick(); return; }
-  if (tab === "settings" && !canSettings()) tab = "week";
   show(tab);
   ({ week: renderWeek, pay: renderPay, people: renderPeople, settings: renderSettings })[tab]();
 }
@@ -345,21 +346,116 @@ function renderPeople() {
     + grp("z", "Záskoky", "Hrají, když je volné místo.");
 }
 
-// ---------- nastavení (admin) ----------
+// ---------- zprávy do WhatsAppu ----------
+// Karty se počítají z dat: status od neděle 20:00 před termínem do začátku, pak změny proti poslednímu odeslání,
+// platba 5 minut po konci, dokud ji někdo neodešle (nejdéle do nedělního statusu na další termín).
+const atPrague = (d, t) => new Date(`${d}T${t || "00:00"}:00${pragueOffset(d)}`);
+function statusFrom(d) { const dow = new Date(d + "T12:00:00Z").getUTCDay(), sun = iso(Date.parse(d + "T12:00:00Z") - (dow || 7) * DAY); return atPrague(sun, "20:00"); }
+const sessionEnd = d => atPrague(d, C().end || C().time);
+const waLog = (d, ...k) => (wa || []).filter(x => x.d === d && k.includes(x.k));
+const dayLabel = d => `${C().type === "once" ? "" : (C().dow || "") + " "}${fmtD(d)}`.trim();
+const dayUrl = d => `${location.origin}${location.pathname}?g=${encodeURIComponent(slug)}&d=${d}`;
+const ST = { ano: "ANO", ne: "NE", chci: "šel bych" };
+const names = list => list.map(p => p.n).join(", ");
+
+function cashSuggestion(d) {
+  if (cash[d] && P(cash[d])) return { p: P(cash[d]), set: true };
+  const a = att[d] || {}, st = people().filter(p => p.g === "s");
+  let cand = st.filter(p => a[p.id]?.st === "ano"); if (!cand.length) cand = st.filter(p => a[p.id]?.st !== "ne");
+  const past = days().filter(x => x < d && cash[x]);
+  const info = p => { const mine = past.filter(x => cash[x] == p.id); return { p, n: mine.length, last: mine[mine.length - 1] || "" }; };
+  const best = cand.map(info).sort((x, y) => x.n - y.n || x.last.localeCompare(y.last) || byName(x.p, y.p))[0];
+  return best || null;
+}
+function statusText(d) {
+  const s = stats(d), cs = C().tr?.on ? cashSuggestion(d) : null;
+  return [`🏐 *${D.group.name} · ${dayLabel(d)} · ${hm(C().time)}*`,
+    `✅ Jde: *${s.n} z ${s.cap}*`,
+    s.sOpen.length ? `❓ Stálí bez odpovědi: ${names([...s.sOpen].sort(byName))}` : "✅ Všichni stálí odpověděli",
+    s.free > 0 ? `🟢 Volno: *${s.free} ${plural(s.free, "místo", "místa", "míst")}*` : "🔴 Plno",
+    s.zChci.length ? `🙋 Šel bych (pořadí): ${s.zChci.map((p, i) => `${i + 1}. ${p.n}`).join(", ")}` : "",
+    !cs ? "" : cs.set ? `💵 Cash přinese: *${cs.p.n}*` : `💵 Kdo přinese cash? Návrh: *${cs.p.n}* (${cs.last ? "naposledy " + fmtD(cs.last) : "zatím nikdy"})`,
+    `👉 Odpovězte v aplikaci: ${dayUrl(d)}`].filter(Boolean).join("\n");
+}
+function changesOf(d) {
+  const base = waLog(d, "status", "changes").pop()?.s || {}, a = att[d] || {};
+  const ids = new Set([...Object.keys(base), ...Object.keys(a).map(String)]);
+  return [...ids].map(id => ({ p: P(id), from: base[id] || null, to: a[id]?.st || null })).filter(x => x.p && x.from !== x.to).sort((x, y) => byName(x.p, y.p));
+}
+function changesText(d, ch) {
+  const s = stats(d), ic = { ano: "✅", ne: "❌", chci: "🙋" };
+  return [`🔄 *Změny · ${dayLabel(d)}*`,
+    ...ch.map(x => `${ic[x.to] || "↩️"} ${x.p.n}: ${x.from ? ST[x.from] + " → " : ""}*${x.to ? ST[x.to] : "bez odpovědi"}*`),
+    `✅ Jde: *${s.n} z ${s.cap}* · ${s.free > 0 ? `🟢 volno *${s.free} ${plural(s.free, "místo", "místa", "míst")}*` : "🔴 plno"}`,
+    s.free > 0 && s.zChci.length ? `🙋 Na řadě: ${s.zChci[0].n}` : "",
+    `👉 ${dayUrl(d)}`].filter(Boolean).join("\n");
+}
+function payText(d) {
+  const s = stats(d), cp = P(cash[d]), tc = trCost(), c = court();
+  return [`💸 *Platba · ${dayLabel(d)}* (${plural(s.n, "hrál", "hráli", "hrálo")} ${s.n})`,
+    tc ? (cp ? `🧑‍🏫 ${trName()} ${kc(tc)} zaplatil(a) hotově *${cp.n}*\n→ ostatní pošlete ${cp.n} po *${kc(s.tr)}*` : `🧑‍🏫 ${trName()}: *${kc(s.tr)}* na osobu. Kdo přinesl cash? Doplňte v aplikaci.`) : "",
+    c ? (s.prep ? (s.zAno.length ? `🏐 ${ctName()}: ${s.zAno.length === 1 ? "záskok" : "záskoci"} ${names([...s.zAno].sort(byName))} ${s.zAno.length === 1 ? "pošle" : "pošlou"} *${kc(s.ct)}* přes QR v aplikaci` : `🏐 ${ctName()} mají stálí předplacený.`) : `🏐 ${ctName()}: každý pošle *${kc(s.ct)}* přes QR v aplikaci`) : "",
+    tc && cp ? `🙏 ${cp.n}, hoď sem prosím svůj QR kód.` : "",
+    `👉 ${dayUrl(d)}`].filter(Boolean).join("\n");
+}
+function waCards() {
+  if (!D?.group?.cfg || wa === null) return [];
+  const now = Date.now(), ds = days(), out = [];
+  ds.forEach((d, i) => {
+    const start = sessionStart(d).getTime();
+    if (now >= statusFrom(d).getTime() && now < start) {
+      if (!waLog(d, "status").length) out.push({ d, k: "status", ic: "📋", title: "Nedělní status", sub: `na ${dayLabel(d)}`, text: statusText(d) });
+      else { const ch = changesOf(d); if (ch.length) out.push({ d, k: "changes", ic: "🔄", title: "Změny od posledního odeslání", sub: `${dayLabel(d)} · ${ch.length} ${plural(ch.length, "změna", "změny", "změn")}`, text: changesText(d, ch) }); }
+    }
+    const until = i + 1 < ds.length ? statusFrom(ds[i + 1]).getTime() : sessionEnd(d).getTime() + 7 * DAY;
+    if (now >= sessionEnd(d).getTime() + 5 * 60e3 && now < until && !waLog(d, "pay").length && stats(d).n)
+      out.push({ d, k: "pay", ic: "💸", title: "Platba za termín", sub: `${dayLabel(d)} · ${cash[d] && P(cash[d]) ? "cash přinesl(a) " + P(cash[d]).n : "chybí, kdo přinesl cash"}`, warn: trCost() && !P(cash[d]) ? "Nejdřív doplňte na kartě termínu, kdo přinesl cash." : "", text: payText(d) });
+  });
+  return out;
+}
+function msgsPanel(admin) {
+  if (wa === null) return `<div class="panel"><h2>Zprávy do WhatsAppu</h2><p class="sub" style="margin:0">Zprávy zatím nejsou zapnuté. Admin musí v databázi spustit aktualizaci (migrace 002).</p></div>`;
+  const cards = waCards(), kindName = { status: "Nedělní status", changes: "Změny", pay: "Platba" };
+  const recent = (wa || []).filter(x => Date.now() - Date.parse(x.at) < 7 * DAY).slice(-3).reverse();
+  return `<div class="panel"><h2>Zprávy do WhatsAppu ${cards.length ? `<span class="cnt">${cards.length}</span>` : ""}</h2>
+    <p class="sub">Poslat může kdokoli. Ťukněte na <b>Poslat do WhatsAppu</b>, vyberte skupinu a odešlete. Jakmile potvrdíte odeslání, zpráva zmizí i ostatním.</p>
+    ${cards.length ? cards.map(m => { const key = `${m.d}|${m.k}`; return `<article class="msg">
+      <header><span class="ic" aria-hidden="true">${m.ic}</span><div><b>${esc(m.title)}</b><small>${esc(m.sub)}</small></div><span class="st new">Nové</span></header>
+      ${m.warn ? `<div class="alert" style="margin:10px 0 0">${esc(m.warn)}</div>` : ""}
+      <pre class="bubble">${esc(m.text)}</pre>
+      ${waConfirm === key ? `<div class="waconfirm">Odeslal(a) jste to do skupiny? <button class="btn small" data-wayes="${key}">Ano, odesláno</button><button class="btn small ghost" data-wano>Ještě ne</button></div>` :
+      `<div class="acts"><button class="btn wa" data-wasend="${key}">Poslat do WhatsAppu</button><button class="btn small ghost" data-wacopy="${key}">Kopírovat</button>${admin ? `<button class="btn small ghost" data-waign="${key}">Ignorovat</button>` : ""}</div>`}
+    </article>`; }).join("") : `<p class="sub" style="margin:0">Teď není nic k odeslání. 👌</p>`}
+    ${recent.length ? `<h3>Naposledy</h3>${recent.map(x => `<p class="sub done">✓ ${kindName[x.k]} ${fmtD(x.d)} · ${x.a === "sent" ? "odeslal(a) " + esc(P(x.p)?.n || "někdo") : "ignorováno"} · ${new Date(x.at).toLocaleString("cs-CZ", { weekday: "short", hour: "2-digit", minute: "2-digit" })}</p>`).join("")}` : ""}
+    <details class="later"><summary>Kdy se co objeví</summary><ol class="tl">
+      <li><b>Neděle 20:00 před termínem</b><span>Nedělní status. Dřív se pro termín nic nechystá.</span></li>
+      <li><b>Po odeslání statusu až do začátku</b><span>Změny přihlášek se sčítají do jedné karty „Změny“.</span></li>
+      <li><b>Začátek termínu</b><span>Neodeslaný status a změny k termínu zmizí.</span></li>
+      <li><b>5 minut po konci</b><span>Platba za termín. Zůstane, dokud ji někdo neodešle, nejdéle do nedělního statusu na další termín.</span></li>
+    </ol></details></div>`;
+}
 function renderSettings() {
+  const admin = !!(adminPin() || superPin()), pend = superPin() && superData ? superData.groups.filter(g => g.status === "pending").length : 0;
+  $("#s-settings").innerHTML = (admin ? `<a class="adminjump" href="#administrace"><span class="g" aria-hidden="true">⚙️</span><span><b>Administrace</b><small>${pend ? `${pend} ${plural(pend, "žádost", "žádosti", "žádostí")} o skupinu · ` : ""}nastavení skupiny</small></span><span class="go" aria-hidden="true">↓</span></a>` : "")
+    + msgsPanel(admin)
+    + (canSettings() ? `<div class="admzone" id="administrace"><div class="admhead"><span aria-hidden="true">⚙️</span><div><b>Administrace</b><small>vidí jen admin skupiny a správce aplikace</small></div>${admin ? `<a href="#top" class="up" aria-label="Nahoru">↑</a>` : ""}</div>${adminHtml()}</div>`
+      : `<details class="adminlogin"><summary>Jsem admin</summary>${adminHtml()}</details>`);
+}
+
+// ---------- nastavení (admin) ----------
+function adminHtml() {
   const c = C(), pin = adminPin() || superPin();
   if (!pin) {
-    $("#s-settings").innerHTML = `<div class="panel"><h2>Přihlášení admina</h2>
+    return `<div class="panel"><h2>Přihlášení admina</h2>
       <p class="sub">${D.group.has_pin ? "Zadejte PIN admina skupiny." : "Skupina ještě nemá PIN. Zvolte si ho (4–8 číslic), bude potřeba pro změny nastavení."}</p>
       <form id="pinForm" class="addform"><input id="pinIn" inputmode="numeric" autocomplete="off" pattern="[0-9]{4,8}" placeholder="PIN" aria-label="PIN" required><button class="btn" type="submit">${D.group.has_pin ? "Přihlásit" : "Nastavit PIN"}</button></form>
       <p class="sub" style="margin:10px 0 0">Zapomenutý PIN obnoví správce aplikace.</p></div>
       ${superLogin()}`;
-    return;
   }
   const ds = days(), st = people().filter(p => p.g === "s"), paidN = st.filter(p => p.paid).length, need = ds.filter(inPrep).length * court();
   const f = (id, label, sub, val, unit, step = 1) => `<div class="field"><label for="cf-${id}">${label}${sub ? `<small>${sub}</small>` : ""}</label><div class="unit"><input id="cf-${id}" type="number" inputmode="decimal" step="${step}" value="${esc(val)}" data-cf="${id}"><span>${unit}</span></div></div>`;
   const t = (id, label, val, sub = "", type = "text") => `<div class="field wide"><label for="cf-${id}">${label}${sub ? `<small>${sub}</small>` : ""}</label><input id="cf-${id}" type="${type}" value="${esc(val)}" data-cf="${id}"></div>`;
-  $("#s-settings").innerHTML = `${superPanel()}
+  return `${superPanel()}
   <div class="panel"><h2>Skupina</h2>
     <div class="field wide"><label for="gname">Název</label><input id="gname" value="${esc(D.group.name)}" data-gname></div>
     ${t("coach", "Trenér / organizátor", c.coach)}
@@ -475,6 +571,14 @@ document.addEventListener("click", async e => {
   if (b.dataset.del) { const p = P(b.dataset.del); confirmDel = null; if (p.id == meId()) store.set("me:" + slug, null); await act("app_update_person", { p_slug: slug, p_person: p.id, p_patch: { active: false } }, `${p.n} odebrán(a). Historie zůstává.`); return; }
   if (b.dataset.move) { const p = P(b.dataset.move), g = p.g === "s" ? "z" : "s"; await act("app_update_person", { p_slug: slug, p_person: p.id, p_patch: { g } }, `${p.n} je teď ${g === "s" ? "stálý" : "záskok"}.`); return; }
   if (b.dataset.paid) { const p = P(b.dataset.paid); const r = await act("app_set_paid", { p_slug: slug, p_pin: adminPin() || superPin(), p_person: p.id, p_paid: !p.paid }); if (r?.error === "pin") toast("Pro změnu předplatného se přihlaste jako admin v Nastavení."); return; }
+  if (b.dataset.wasend || b.dataset.wacopy) { const [d, k] = (b.dataset.wasend || b.dataset.wacopy).split("|"), m = waCards().find(x => x.d === d && x.k === k); if (!m) return;
+    if (b.dataset.wacopy) { copy(m.text, "Text zkopírován"); return; }
+    window.open("https://wa.me/?text=" + encodeURIComponent(m.text), "_blank"); waConfirm = `${d}|${k}`; render(); return; }
+  if (b.hasAttribute("data-wano")) { waConfirm = null; render(); return; }
+  if (b.dataset.wayes || b.dataset.waign) { const [d, k] = (b.dataset.wayes || b.dataset.waign).split("|"), ign = !!b.dataset.waign; waConfirm = null;
+    const r = await act("app_wa_mark", { p_slug: slug, p_day: d, p_kind: k, p_action: ign ? "ignored" : "sent", p_person: meId(), p_pin: ign ? adminPin() || superPin() : null }, ign ? "Zpráva ignorována" : "Díky, odesláno");
+    if (r?.error === "done") toast("Tuhle zprávu už mezitím odeslal někdo jiný."); else if (r?.error === "pin") toast("Ignorovat může jen admin.");
+    return; }
   if (b.hasAttribute("data-goto-new")) { tab = "new"; render(); scrollTo(0, 0); return; }
   if (b.hasAttribute("data-cancelnew")) { tab = "week"; render(); return; }
   if (b.hasAttribute("data-logout")) { store.set("pin:" + slug, null); tab = "week"; render(); return; }
@@ -555,7 +659,7 @@ document.addEventListener("submit", async e => {
   render();
   if (!slug) return;
   try { await load(); } catch (e) { D = null; $("#s-loading").innerHTML = `<div class="panel"><h2>Nepodařilo se načíst</h2><p class="sub">${esc(e.message)}</p></div>`; return; }
-  if (D?.group?.status === "active") { idx = Math.min(currentIdx(), Math.max(0, days().length - 2)); }
+  if (D?.group?.status === "active") { const ds = days(), dl = ds.indexOf(new URLSearchParams(location.search).get("d")); idx = Math.min(dl >= 0 ? dl : currentIdx(), Math.max(0, ds.length - 2)); }
   render();
   setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 30000);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(); });

@@ -39,6 +39,9 @@ function toast(t) { const e = $("#toast"); e.textContent = t; e.hidden = false; 
 const kc = v => Math.round(v).toLocaleString("cs-CZ") + " Kč";
 const sign = v => (v > 0 ? "+" : v < 0 ? "−" : "±") + Math.abs(v).toLocaleString("cs-CZ") + " Kč";
 const plural = (n, a, b, c) => n === 1 ? a : n >= 2 && n <= 4 ? b : c;
+const places = n => plural(n, "místo", "místa", "míst");
+const players = n => plural(n, "hráč", "hráči", "hráčů");
+const subs = n => plural(n, "záskok", "záskoci", "záskoků");
 const byName = (x, y) => x.n.localeCompare(y.n, "cs");
 const fmtD = k => { const d = new Date(k + "T12:00:00Z"); return `${d.getUTCDate()}. ${d.getUTCMonth() + 1}.`; };
 const iso = t => new Date(t).toISOString().slice(0, 10);
@@ -51,6 +54,7 @@ const meId = () => store.get("me:" + slug, null);
 const me = () => { const p = P(meId()); return p && p.active ? p : null; };
 const adminPin = () => store.get("pin:" + slug, null);
 const superPin = () => store.get("superpin", null);
+const anyPin = () => adminPin() || superPin(); // PIN pro admin akce: admin skupiny, jinak správce aplikace
 const isGroupAdmin = () => !!(me() && me().id == D.group.admin_person);
 const canSettings = () => isGroupAdmin() || !!adminPin() || !!superPin();
 const trCost = () => C().tr?.on ? +C().tr.price || 0 : 0;
@@ -65,18 +69,20 @@ function days() {
   const start = Date.parse(c.start + "T12:00:00Z"), n = Math.max(1, +c.weeks || 1);
   return [...Array(n).keys()].map(i => iso(start + i * 7 * DAY));
 }
-function todayIso() { return iso(Date.now() + 2 * 3600e3); } // Praha ≈ UTC+1/+2; pro výběr dne stačí
+function todayIso() { const t = Date.now(); return iso(t + (pragueOffset(iso(t)) === "+02:00" ? 2 : 1) * 3600e3); }
 function currentIdx() {
   const ds = days(), t = todayIso();
   const i = ds.findIndex(d => d >= t);
   return i < 0 ? ds.length - 1 : i;
 }
 const inPrep = d => C().model === "prepay" && d >= C().prepFrom && d <= C().prepTo;
-const sessionStart = d => new Date(`${d}T${C().time || "00:00"}:00${pragueOffset(d)}`);
 function pragueOffset(d) { // letní čas: poslední neděle v březnu až poslední neděle v říjnu
   const y = +d.slice(0, 4), lastSun = m => { const t = new Date(Date.UTC(y, m + 1, 0)); return iso(t - t.getUTCDay() * DAY); };
   return d >= lastSun(2) && d < lastSun(9) ? "+02:00" : "+01:00";
 }
+const atPrague = (d, t) => new Date(`${d}T${t || "00:00"}:00${pragueOffset(d)}`);
+const sessionStart = d => atPrague(d, C().time);
+const sessionEnd = d => atPrague(d, C().end || C().time);
 const priorityActive = d => Date.now() < sessionStart(d).getTime() - 24 * 3600e3;
 
 // ---------- výpočty ----------
@@ -88,12 +94,12 @@ function stats(d) {
   const zAno = zQ.filter(p => a[p.id].st === "ano"), zChci = zQ.filter(p => a[p.id].st === "chci");
   const n = sAno.length + zAno.length, cap = +C().cap || 99, free = cap - n;
   const tr = n ? Math.ceil(trCost() / n) : 0;
-  const ctRaw = n && court() ? Math.ceil(court() / n / 10) * 10 : 0;
-  const ct = ctRaw, prep = inPrep(d);
+  const ct = n && court() ? Math.ceil(court() / n / 10) * 10 : 0, prep = inPrep(d);
+  const ctOf = p => prep && p.g === "s" ? 0 : ct;
   const ahead = p => { const i = zQ.indexOf(p); return i < 0 ? zChci : zChci.filter(q => zQ.indexOf(q) < i); };
   const canAno = p => free > 0 && (p.g === "s" || !priorityActive(d) || ahead(p).length < free);
-  return { a, sAno, sOpen, zQ, zAno, zChci, n, cap, free, tr, ct, ctRaw, prep, ahead, canAno,
-    trSum: tr * n, ctSum: ct * (prep ? zAno.length : n) };
+  return { a, sAno, sOpen, zQ, zAno, zChci, n, cap, free, tr, ct, ctOf, prep, ahead, canAno,
+    trSum: tr * n, ctSum: [...sAno, ...zAno].reduce((x, p) => x + ctOf(p), 0) };
 }
 
 // ---------- avatar ----------
@@ -215,8 +221,8 @@ function weekCard(d, label, isNow) {
   const openTxt = s.sOpen.length ? `Ze stálých ${s.sOpen.length} ${plural(s.sOpen.length, "neodpověděl", "neodpověděli", "neodpovědělo")}: ${s.sOpen.sort(byName).map(p => esc(p.n)).join(", ").replace(/\.$/, "")}.` : "";
   let alert;
   if (s.free <= 0) alert = `<div class="alert">${s.free < 0 ? `Přes kapacitu o ${-s.free}.` : "Plno."} ${openTxt}</div>`;
-  else if (s.zChci.length && priorityActive(d)) alert = `<div class="alert info">Volno: ${s.free} ${plural(s.free, "místo", "místa", "míst")}. Přednost má ${esc(s.zChci[0].n)} (dřív klikl/a „šel bych“) až do 24 h před tréninkem. ${openTxt}</div>`;
-  else alert = `<div class="alert info">Volno: ${s.free} ${plural(s.free, "místo", "místa", "míst")}${s.zChci.length ? ". Místo dostane ten, kdo první dá ANO" : " pro záskok"}. ${openTxt}</div>`;
+  else if (s.zChci.length && priorityActive(d)) alert = `<div class="alert info">Volno: ${s.free} ${places(s.free)}. Přednost má ${esc(s.zChci[0].n)} (dřív klikl/a „šel bych“) až do 24 h před tréninkem. ${openTxt}</div>`;
+  else alert = `<div class="alert info">Volno: ${s.free} ${places(s.free)}${s.zChci.length ? ". Místo dostane ten, kdo první dá ANO" : " pro záskok"}. ${openTxt}</div>`;
 
   const seg = (p, st) => {
     const dis = st !== "ano" && !s.canAno(p) ? "disabled" : "";
@@ -237,7 +243,7 @@ function weekCard(d, label, isNow) {
   return `<article class="week">
     <div class="sum"><span class="sum-ano"><b class="num">${s.n}× ANO</b> z ${cap}</span><span class="sum-open">${s.sOpen.length ? `${s.sOpen.length} ${plural(s.sOpen.length, "stálý nepotvrdil", "stálí nepotvrdili", "stálých nepotvrdilo")}` : "všichni stálí odpověděli"}</span></div>
     <div class="week-h"><div><span class="badge ${isNow ? "now" : ""}">${label}</span><div class="date" style="margin-top:6px">${esc((C().dow || "").slice(0, 2).replace(/^./, c => c.toUpperCase()))} ${fmtD(d)}</div></div>
-      <div class="cap"><small>${s.sAno.length} stálých + ${s.zAno.length} ${plural(s.zAno.length, "záskok", "záskoci", "záskoků")}</small></div></div>
+      <div class="cap"><small>${s.sAno.length} stálých + ${s.zAno.length} ${subs(s.zAno.length)}</small></div></div>
     <div class="courts" aria-hidden="true">${bars.join("")}</div>${alert}
     <div class="grp"><span>Ty</span><span>${m.g === "s" ? "stálý" : "záskok"}</span></div>${row(m)}
     <div class="grp" style="margin-top:6px"><span>Stálí${C().model === "prepay" ? " (předplacený " + esc(ctName().toLowerCase()) + ")" : ""}</span><span class="num">${s.sAno.length}× ANO</span></div>${st.map(row).join("")}
@@ -262,50 +268,79 @@ function qrSvg(text) {
   catch { return `<small style="color:#333">QR se nepodařilo vytvořit</small>`; }
 }
 function renderPay() {
-  const ds = days(), d = payDay && ds.includes(payDay) ? payDay : ds[currentIdx()], s = stats(d), c = court(), tc = trCost(), cp = P(cash[d]);
-  const rows = [...[...s.sAno].sort(byName).map(p => ({ p, t: "Stálý", tr: s.tr, ct: s.prep ? 0 : s.ct })), ...[...s.zAno].sort(byName).map(p => ({ p, t: "Záskok", tr: s.tr, ct: s.ct }))];
-  const sumTr = rows.reduce((x, r) => x + r.tr, 0), sumCt = rows.reduce((x, r) => x + r.ct, 0);
-  const trPct = tc + c ? Math.round(tc / (tc + c) * 100) : 50, cashIn = cp && rows.some(r => r.p === cp);
+  const ds = days(), d = payDay && ds.includes(payDay) ? payDay : ds[currentIdx()];
+  const s = stats(d), pay = { d, s, c: court(), tc: trCost(), cp: P(cash[d]) };
+  $("#s-pay").innerHTML = payCalcPanel(pay, ds) + payCashPanel(pay) + payCheckPanel(pay) + payWhoPanel(pay) + payQrPanel(pay)
+    + (ds.length > 1 ? seasonPanel() : "");
+}
+function payCalcPanel({ d, s, c, tc }, ds) {
+  const trPct = tc + c ? Math.round(tc / (tc + c) * 100) : 50;
   const opts = ds.map((x, i) => `<option value="${x}" ${x === d ? "selected" : ""}>${fmtD(x)}${i === currentIdx() && ds.length > 1 ? " (tento týden)" : ""}</option>`).join("");
-  $("#s-pay").innerHTML = `
-  <div class="panel">
-    <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap"><h2>Platba za termín</h2>${ds.length > 1 ? `<select id="payDay" aria-label="Termín">${opts}</select>` : ""}</div>
-    <p class="sub">Hraje <b class="num">${s.n}</b> lidí (${s.sAno.length} stálých + ${s.zAno.length} ${plural(s.zAno.length, "záskok", "záskoci", "záskoků")}).</p>
+  const perHead = (total, rounding, share, who) =>
+    `${kc(total)} ÷ ${s.n} ${players(s.n)} = ${(total / s.n).toFixed(2).replace(".", ",")} Kč, zaokrouhleno nahoru na ${rounding} = <b>${kc(share)}</b> ${who}`;
+  return `<div class="panel">
+    <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap"><h2>Platba za termín</h2>
+      ${ds.length > 1 ? `<select id="payDay" aria-label="Termín">${opts}</select>` : ""}</div>
+    <p class="sub">Hraje <b class="num">${s.n}</b> lidí (${s.sAno.length} stálých + ${s.zAno.length} ${subs(s.zAno.length)}).</p>
     ${tc && c ? `<div class="bar" aria-hidden="true"><i style="width:${trPct}%;background:var(--sea)"></i><i style="width:${100 - trPct}%;background:var(--sun)"></i></div>
-    <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted)"><span>${esc(trName())} ${kc(tc)}</span><span>${esc(ctName())} ${kc(c)} / termín</span></div>` : ""}
+    <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted)">
+      <span>${esc(trName())} ${kc(tc)}</span><span>${esc(ctName())} ${kc(c)} / termín</span></div>` : ""}
     <div class="split" style="margin-top:12px">
       ${tc ? `<div class="kpi"><small>${esc(trName())} / os.</small><b class="num">${s.n ? kc(s.tr) : "—"}</b><span>platí všichni</span></div>` : ""}
-      ${c ? `<div class="kpi"><small>${esc(ctName())} / ${s.prep ? "záskok" : "hráč"}</small><b class="num">${s.n ? kc(s.ct) : "—"}</b><span>${s.prep ? "stálí mají předplaceno" : "platí všichni"}</span></div>` : ""}
+      ${c ? `<div class="kpi"><small>${esc(ctName())} / ${s.prep ? "záskok" : "hráč"}</small><b class="num">${s.n ? kc(s.ct) : "—"}</b>
+        <span>${s.prep ? "stálí mají předplaceno" : "platí všichni"}</span></div>` : ""}
     </div>
     <div class="calc num">${!s.n ? "Zatím nikdo nepotvrdil ANO." : [
-      tc ? `<div><b>${esc(trName())}:</b> ${kc(tc)} ÷ ${s.n} ${plural(s.n, "hráč", "hráči", "hráčů")} = ${(tc / s.n).toFixed(2).replace(".", ",")} Kč, zaokrouhleno nahoru na koruny = <b>${kc(s.tr)}</b> na každého.</div>` : "",
-      c ? `<div><b>${esc(ctName())}:</b> ${kc(c)} ÷ ${s.n} ${plural(s.n, "hráč", "hráči", "hráčů")} = ${(c / s.n).toFixed(2).replace(".", ",")} Kč, zaokrouhleno nahoru na desetikoruny = <b>${kc(s.ct)}</b> ${s.prep ? "na každého záskoka. Stálí mají kurt předplacený." : "na každého hráče."}</div>` : ""].join("")}</div>
-  </div>
-  ${tc ? `<div class="panel cashp"><h2>${esc(trName())}: hotově</h2>
-    ${cp ? `<div class="cashrow">${avatar(cp, 44)}<div><b>${esc(cp.n)}</b> přinese ${kc(tc)} hotově a zaplatí.<br><span class="sub">Ostatní pošlou po <b class="num">${kc(s.tr)}</b> přes QR, které ${esc(cp.n)} dá do WhatsApp skupiny.</span></div></div>
-      <p class="sub num" style="margin:10px 0 0">Kontrola: ${cashIn ? `${s.n - 1} × ${kc(s.tr)} od ostatních + vlastní podíl ${kc(s.tr)}` : `${s.n} × ${kc(s.tr)}`} = ${kc(s.trSum)} proti ${kc(tc)}, rozdíl ${sign(s.trSum - tc)}.</p>`
-      : `<p class="sub" style="margin:0">Zatím nikdo nevybral, kdo přinese cash. Nastavíte to dole na kartě termínu.</p>`}</div>` : ""}
-  <div class="panel"><h2>Kontrola termínu</h2><p class="sub">Sedí vybrané peníze na cenu?</p>
+      tc ? `<div><b>${esc(trName())}:</b> ${perHead(tc, "koruny", s.tr, "na každého.")}</div>` : "",
+      c ? `<div><b>${esc(ctName())}:</b> ${perHead(c, "desetikoruny", s.ct, s.prep ? "na každého záskoka. Stálí mají kurt předplacený." : "na každého hráče.")}</div>` : ""].join("")}</div>
+  </div>`;
+}
+function payCashPanel({ s, tc, cp }) {
+  if (!tc) return "";
+  const cashIn = cp && [...s.sAno, ...s.zAno].includes(cp);
+  return `<div class="panel cashp"><h2>${esc(trName())}: hotově</h2>
+    ${cp ? `<div class="cashrow">${avatar(cp, 44)}<div><b>${esc(cp.n)}</b> přinese ${kc(tc)} hotově a zaplatí.<br>
+      <span class="sub">Ostatní pošlou po <b class="num">${kc(s.tr)}</b> přes QR, které ${esc(cp.n)} dá do WhatsApp skupiny.</span></div></div>
+      <p class="sub num" style="margin:10px 0 0">Kontrola: ${cashIn ? `${s.n - 1} × ${kc(s.tr)} od ostatních + vlastní podíl ${kc(s.tr)}` : `${s.n} × ${kc(s.tr)}`}
+        = ${kc(s.trSum)} proti ${kc(tc)}, rozdíl ${sign(s.trSum - tc)}.</p>`
+      : `<p class="sub" style="margin:0">Zatím nikdo nevybral, kdo přinese cash. Nastavíte to dole na kartě termínu.</p>`}</div>`;
+}
+function payCheckPanel({ s, c, tc }) {
+  const diff = (sum, price) => `<span class="${sum >= price ? "paid" : "unpaid"}">${sign(sum - price)}</span>`;
+  const row = (name, price, got, result) => `<tr><td>${name}</td><td class="r">${price}</td><td class="r">${got}</td><td class="r">${result}</td></tr>`;
+  const note = t => `<br><small style="color:var(--muted)">${t}</small>`;
+  const courtRows = !c ? "" : s.prep
+    ? row(esc(ctName()) + note("kryto předplatným"), kc(c), kc(c), `<span class="paid">✓</span>`)
+      + row(`${esc(ctName())} od záskoků` + note("jde do kasy"), "–", kc(s.ctSum), `<span class="paid">${sign(s.ctSum)}</span>`)
+    : row(esc(ctName()), kc(c), kc(s.ctSum), diff(s.ctSum, c));
+  return `<div class="panel"><h2>Kontrola termínu</h2><p class="sub">Sedí vybrané peníze na cenu?</p>
     <table class="num"><thead><tr><th>Položka</th><th class="r">Cena</th><th class="r">Vybráno</th><th class="r">Rozdíl</th></tr></thead><tbody>
-      ${tc ? `<tr><td>${esc(trName())}</td><td class="r">${kc(tc)}</td><td class="r">${kc(s.trSum)}</td><td class="r"><span class="${s.trSum >= tc ? "paid" : "unpaid"}">${sign(s.trSum - tc)}</span></td></tr>` : ""}
-      ${c ? (s.prep ? `<tr><td>${esc(ctName())}<br><small style="color:var(--muted)">kryto předplatným</small></td><td class="r">${kc(c)}</td><td class="r">${kc(c)}</td><td class="r"><span class="paid">✓</span></td></tr>
-      <tr><td>${esc(ctName())} od záskoků<br><small style="color:var(--muted)">jde do kasy</small></td><td class="r">–</td><td class="r">${kc(s.ctSum)}</td><td class="r"><span class="paid">${sign(s.ctSum)}</span></td></tr>`
-      : `<tr><td>${esc(ctName())}</td><td class="r">${kc(c)}</td><td class="r">${kc(s.ctSum)}</td><td class="r"><span class="${s.ctSum >= c ? "paid" : "unpaid"}">${sign(s.ctSum - c)}</span></td></tr>`) : ""}
+      ${tc ? row(esc(trName()), kc(tc), kc(s.trSum), diff(s.trSum, tc)) : ""}${courtRows}
     </tbody></table>
-    ${C().model === "prepay" ? `<p class="sub" style="margin-top:8px">Předplacené období: ${fmtD(C().prepFrom)} – ${fmtD(C().prepTo)} Tento termín ${s.prep ? "<b>je</b> v něm" : "<b>není</b> v něm"}.</p>` : ""}
-  </div>
-  <div class="panel"><h2>Kdo kolik platí</h2>
-    <div style="overflow-x:auto"><table class="num"><thead><tr><th>Hráč</th>${tc ? `<th class="r">${esc(trName())}</th>` : ""}${c ? `<th class="r">${esc(ctName())}</th>` : ""}<th class="r">Celkem</th></tr></thead><tbody>
-    ${rows.map(r => `<tr><td>${esc(r.p.n)} <span class="tag ${r.t === "Záskok" ? "sub" : ""}">${r.t}</span></td>${tc ? `<td class="r">${kc(r.tr)}</td>` : ""}${c ? `<td class="r">${r.ct ? kc(r.ct) : "–"}</td>` : ""}<td class="r"><b>${kc(r.tr + r.ct)}</b></td></tr>`).join("")}
-    </tbody><tfoot><tr><td>Vybráno</td>${tc ? `<td class="r">${kc(sumTr)}</td>` : ""}${c ? `<td class="r">${kc(sumCt)}</td>` : ""}<td class="r">${kc(sumTr + sumCt)}</td></tr></tfoot></table></div>
-  </div>
-  ${c && C().iban ? `<div class="panel"><h2>QR platba: ${esc(ctName().toLowerCase())}</h2>
+    ${C().model === "prepay" ? `<p class="sub" style="margin-top:8px">Předplacené období: ${fmtD(C().prepFrom)} – ${fmtD(C().prepTo)}
+      Tento termín ${s.prep ? "<b>je</b> v něm" : "<b>není</b> v něm"}.</p>` : ""}
+  </div>`;
+}
+function payWhoPanel({ s, c, tc }) {
+  const rows = [...[...s.sAno].sort(byName), ...[...s.zAno].sort(byName)].map(p => ({ p, tr: s.tr, ct: s.ctOf(p) }));
+  const sumTr = rows.reduce((x, r) => x + r.tr, 0), sumCt = rows.reduce((x, r) => x + r.ct, 0);
+  const cells = (tr, ct, total) => `${tc ? `<td class="r">${tr}</td>` : ""}${c ? `<td class="r">${ct}</td>` : ""}<td class="r">${total}</td>`;
+  return `<div class="panel"><h2>Kdo kolik platí</h2>
+    <div style="overflow-x:auto"><table class="num">
+      <thead><tr><th>Hráč</th>${tc ? `<th class="r">${esc(trName())}</th>` : ""}${c ? `<th class="r">${esc(ctName())}</th>` : ""}<th class="r">Celkem</th></tr></thead>
+      <tbody>${rows.map(r => `<tr><td>${esc(r.p.n)} <span class="tag ${r.p.g === "z" ? "sub" : ""}">${r.p.g === "z" ? "Záskok" : "Stálý"}</span></td>
+        ${cells(kc(r.tr), r.ct ? kc(r.ct) : "–", `<b>${kc(r.tr + r.ct)}</b>`)}</tr>`).join("")}</tbody>
+      <tfoot><tr><td>Vybráno</td>${cells(kc(sumTr), kc(sumCt), kc(sumTr + sumCt))}</tr></tfoot></table></div>
+  </div>`;
+}
+function payQrPanel({ s, c }) {
+  if (!c || !C().iban) return "";
+  return `<div class="panel"><h2>QR platba: ${esc(ctName().toLowerCase())}</h2>
     <p class="sub">${s.prep ? "Pro záskoky." : "Pro všechny hráče."} Částka se dopočítá podle počtu hráčů.</p>
     <div class="qrwrap"><div class="qr">${qrSvg(spd(s.ct))}</div>
       <div class="qrinfo"><b class="num">${kc(s.ct)}</b><span>Zpráva: <i>${esc(C().msg)}</i></span>
         <span class="acc">${esc(C().iban).replace(/(.{4})/g, "$1 ").trim()}</span>
-        <button class="btn ghost small" id="copyAcc" style="align-self:flex-start">Kopírovat číslo účtu</button></div></div></div>` : ""}
-  ${ds.length > 1 ? seasonPanel() : ""}`;
+        <button class="btn ghost small" id="copyAcc" style="align-self:flex-start">Kopírovat číslo účtu</button></div></div></div>`;
 }
 function seasonPanel() {
   let trD = 0, ctZ = 0; const ds = days(), cur = currentIdx(), c = court();
@@ -349,9 +384,7 @@ function renderPeople() {
 // ---------- zprávy do WhatsAppu ----------
 // Karty se počítají z dat: status od neděle 20:00 před termínem do začátku, pak změny proti poslednímu odeslání,
 // platba 5 minut po konci, dokud ji někdo neodešle (nejdéle do nedělního statusu na další termín).
-const atPrague = (d, t) => new Date(`${d}T${t || "00:00"}:00${pragueOffset(d)}`);
 function statusFrom(d) { const dow = new Date(d + "T12:00:00Z").getUTCDay(), sun = iso(Date.parse(d + "T12:00:00Z") - (dow || 7) * DAY); return atPrague(sun, "20:00"); }
-const sessionEnd = d => atPrague(d, C().end || C().time);
 const waLog = (d, ...k) => (wa || []).filter(x => x.d === d && k.includes(x.k));
 const dayLabel = d => `${C().type === "once" ? "" : (C().dow || "") + " "}${fmtD(d)}`.trim();
 const dayUrl = d => `${location.origin}${location.pathname}?g=${encodeURIComponent(slug)}&d=${d}`;
@@ -372,7 +405,7 @@ function statusText(d) {
   return [`🏐 *${D.group.name} · ${dayLabel(d)} · ${hm(C().time)}*`,
     `✅ Jde: *${s.n} z ${s.cap}*`,
     s.sOpen.length ? `❓ Stálí bez odpovědi: ${names([...s.sOpen].sort(byName))}` : "✅ Všichni stálí odpověděli",
-    s.free > 0 ? `🟢 Volno: *${s.free} ${plural(s.free, "místo", "místa", "míst")}*` : "🔴 Plno",
+    s.free > 0 ? `🟢 Volno: *${s.free} ${places(s.free)}*` : "🔴 Plno",
     s.zChci.length ? `🙋 Šel bych (pořadí): ${s.zChci.map((p, i) => `${i + 1}. ${p.n}`).join(", ")}` : "",
     !cs ? "" : cs.set ? `💵 Cash přinese: *${cs.p.n}*` : `💵 Kdo přinese cash? Návrh: *${cs.p.n}* (${cs.last ? "naposledy " + fmtD(cs.last) : "zatím nikdy"})`,
     `👉 Odpovězte v aplikaci: ${dayUrl(d)}`].filter(Boolean).join("\n");
@@ -386,7 +419,7 @@ function changesText(d, ch) {
   const s = stats(d), ic = { ano: "✅", ne: "❌", chci: "🙋" };
   return [`🔄 *Změny · ${dayLabel(d)}*`,
     ...ch.map(x => `${ic[x.to] || "↩️"} ${x.p.n}: ${x.from ? ST[x.from] + " → " : ""}*${x.to ? ST[x.to] : "bez odpovědi"}*`),
-    `✅ Jde: *${s.n} z ${s.cap}* · ${s.free > 0 ? `🟢 volno *${s.free} ${plural(s.free, "místo", "místa", "míst")}*` : "🔴 plno"}`,
+    `✅ Jde: *${s.n} z ${s.cap}* · ${s.free > 0 ? `🟢 volno *${s.free} ${places(s.free)}*` : "🔴 plno"}`,
     s.free > 0 && s.zChci.length ? `🙋 Na řadě: ${s.zChci[0].n}` : "",
     `👉 ${dayUrl(d)}`].filter(Boolean).join("\n");
 }
@@ -435,7 +468,7 @@ function msgsPanel(admin) {
     </ol></details></div>`;
 }
 function renderSettings() {
-  const admin = !!(adminPin() || superPin()), pend = superPin() && superData ? superData.groups.filter(g => g.status === "pending").length : 0;
+  const admin = !!anyPin(), pend = superPin() && superData ? superData.groups.filter(g => g.status === "pending").length : 0;
   $("#s-settings").innerHTML = (admin ? `<a class="adminjump" href="#administrace"><span class="g" aria-hidden="true">⚙️</span><span><b>Administrace</b><small>${pend ? `${pend} ${plural(pend, "žádost", "žádosti", "žádostí")} o skupinu · ` : ""}nastavení skupiny</small></span><span class="go" aria-hidden="true">↓</span></a>` : "")
     + msgsPanel(admin)
     + (canSettings() ? `<div class="admzone" id="administrace"><div class="admhead"><span aria-hidden="true">⚙️</span><div><b>Administrace</b><small>vidí jen admin skupiny a správce aplikace</small></div>${admin ? `<a href="#top" class="up" aria-label="Nahoru">↑</a>` : ""}</div>${adminHtml()}</div>`
@@ -444,52 +477,81 @@ function renderSettings() {
 
 // ---------- nastavení (admin) ----------
 function adminHtml() {
-  const c = C(), pin = adminPin() || superPin();
-  if (!pin) {
-    return `<div class="panel"><h2>Přihlášení admina</h2>
-      <p class="sub">${D.group.has_pin ? "Zadejte PIN admina skupiny." : "Skupina ještě nemá PIN. Zvolte si ho (4–8 číslic), bude potřeba pro změny nastavení."}</p>
-      <form id="pinForm" class="addform"><input id="pinIn" inputmode="numeric" autocomplete="off" pattern="[0-9]{4,8}" placeholder="PIN" aria-label="PIN" required><button class="btn" type="submit">${D.group.has_pin ? "Přihlásit" : "Nastavit PIN"}</button></form>
-      <p class="sub" style="margin:10px 0 0">Zapomenutý PIN obnoví správce aplikace.</p></div>
-      ${superLogin()}`;
-  }
-  const ds = days(), st = people().filter(p => p.g === "s"), paidN = st.filter(p => p.paid).length, need = ds.filter(inPrep).length * court();
-  const f = (id, label, sub, val, unit, step = 1) => `<div class="field"><label for="cf-${id}">${label}${sub ? `<small>${sub}</small>` : ""}</label><div class="unit"><input id="cf-${id}" type="number" inputmode="decimal" step="${step}" value="${esc(val)}" data-cf="${id}"><span>${unit}</span></div></div>`;
-  const t = (id, label, val, sub = "", type = "text") => `<div class="field wide"><label for="cf-${id}">${label}${sub ? `<small>${sub}</small>` : ""}</label><input id="cf-${id}" type="${type}" value="${esc(val)}" data-cf="${id}"></div>`;
-  return `${superPanel()}
-  <div class="panel"><h2>Skupina</h2>
+  if (!anyPin()) return adminLoginPanel() + superLogin();
+  return superPanel() + cfgGroupPanel() + cfgPricePanel() + cfgPrepayPanel() + cfgQrPanel() + cfgAdminPanel() + (superPin() ? "" : superLogin());
+}
+// Pole nastavení: změna se hned uloží (viz událost "change" a app_save_cfg).
+const cfgLabel = (id, label, sub) => `<label for="cf-${id}">${label}${sub ? `<small>${sub}</small>` : ""}</label>`;
+const cfgNum = (id, label, sub, val, unit, step = 1) => `<div class="field">${cfgLabel(id, label, sub)}
+  <div class="unit"><input id="cf-${id}" type="number" inputmode="decimal" step="${step}" value="${esc(val)}" data-cf="${id}"><span>${unit}</span></div></div>`;
+const cfgText = (id, label, val, sub = "", type = "text") => `<div class="field wide">${cfgLabel(id, label, sub)}
+  <input id="cf-${id}" type="${type}" value="${esc(val)}" data-cf="${id}"></div>`;
+const cfgSelect = (id, label, val, options) => `<div class="field wide"><label for="cf-${id}">${label}</label><select id="cf-${id}" data-cf="${id}">
+  ${Object.entries(options).map(([k, name]) => `<option value="${k}" ${val === k ? "selected" : ""}>${name}</option>`).join("")}</select></div>`;
+const cfgCost = (key, n, priceKey, priceLabel, sub) => { const x = C()[key]; return `<div class="field wide"><label>Položka ${n}<small>${sub}</small></label>
+  <div class="costrow"><input value="${esc(x?.name)}" data-cf="${key}.name" aria-label="Název položky ${n}">
+    <input type="number" value="${esc(x?.[priceKey])}" data-cf="${key}.${priceKey}" aria-label="${priceLabel}">
+    <label class="sw"><input type="checkbox" data-cf="${key}.on" ${x?.on ? "checked" : ""}> zapnuto</label></div></div>`; };
+
+function adminLoginPanel() {
+  return `<div class="panel"><h2>Přihlášení admina</h2>
+    <p class="sub">${D.group.has_pin ? "Zadejte PIN admina skupiny." : "Skupina ještě nemá PIN. Zvolte si ho (4–8 číslic), bude potřeba pro změny nastavení."}</p>
+    <form id="pinForm" class="addform"><input id="pinIn" inputmode="numeric" autocomplete="off" pattern="[0-9]{4,8}" placeholder="PIN" aria-label="PIN" required>
+      <button class="btn" type="submit">${D.group.has_pin ? "Přihlásit" : "Nastavit PIN"}</button></form>
+    <p class="sub" style="margin:10px 0 0">Zapomenutý PIN obnoví správce aplikace.</p></div>`;
+}
+function cfgGroupPanel() {
+  const c = C();
+  return `<div class="panel"><h2>Skupina</h2>
     <div class="field wide"><label for="gname">Název</label><input id="gname" value="${esc(D.group.name)}" data-gname></div>
-    ${t("coach", "Trenér / organizátor", c.coach)}
-    ${t("place", "Místo", c.place)}${t("season", "Sezóna", c.season, "zobrazí se v hlavičce")}
-    ${c.type === "once" ? t("date", "Datum", c.date, "", "date") : `${t("dow", "Den v týdnu", c.dow)}${t("start", "První termín", c.start, "", "date")}${f("weeks", "Počet termínů", "", c.weeks, "×")}`}
-    ${t("time", "Začátek", c.time, "", "time")}${t("end", "Konec", c.end, "", "time")}
-    ${f("cap", "Kapacita", "hráčů", c.cap, "os.")}
-  </div>
-  <div class="panel"><h2>Ceny a rozpočítání</h2>
-    <div class="field wide"><label for="cf-model">Model plateb</label><select id="cf-model" data-cf="model"><option value="prepay" ${c.model === "prepay" ? "selected" : ""}>Předplatné stálých + záskoky</option><option value="equal" ${c.model === "equal" ? "selected" : ""}>Všichni rovným dílem</option></select></div>
-    <div class="field wide"><label>Položka 1<small>název, cena za termín, zapnuto</small></label>
-      <div class="costrow"><input value="${esc(c.tr?.name)}" data-cf="tr.name" aria-label="Název položky 1"><input type="number" value="${esc(c.tr?.price)}" data-cf="tr.price" aria-label="Cena položky 1"><label class="sw"><input type="checkbox" data-cf="tr.on" ${c.tr?.on ? "checked" : ""}> zapnuto</label></div></div>
-    <div class="field wide"><label>Položka 2<small>název, cena za hodinu, zapnuto</small></label>
-      <div class="costrow"><input value="${esc(c.ct?.name)}" data-cf="ct.name" aria-label="Název položky 2"><input type="number" value="${esc(c.ct?.hour)}" data-cf="ct.hour" aria-label="Cena za hodinu"><label class="sw"><input type="checkbox" data-cf="ct.on" ${c.ct?.on ? "checked" : ""}> zapnuto</label></div></div>
-    ${f("ct.hours", "Délka", "hodin", c.ct?.hours, "h", 0.5)}
+    ${cfgText("coach", "Trenér / organizátor", c.coach)}
+    ${cfgText("place", "Místo", c.place)}${cfgText("season", "Sezóna", c.season, "zobrazí se v hlavičce")}
+    ${c.type === "once" ? cfgText("date", "Datum", c.date, "", "date")
+      : cfgText("dow", "Den v týdnu", c.dow) + cfgText("start", "První termín", c.start, "", "date") + cfgNum("weeks", "Počet termínů", "", c.weeks, "×")}
+    ${cfgText("time", "Začátek", c.time, "", "time")}${cfgText("end", "Konec", c.end, "", "time")}
+    ${cfgNum("cap", "Kapacita", "hráčů", c.cap, "os.")}
+  </div>`;
+}
+function cfgPricePanel() {
+  const c = C();
+  return `<div class="panel"><h2>Ceny a rozpočítání</h2>
+    ${cfgSelect("model", "Model plateb", c.model, { prepay: "Předplatné stálých + záskoky", equal: "Všichni rovným dílem" })}
+    ${cfgCost("tr", 1, "price", "Cena položky 1", "název, cena za termín, zapnuto")}
+    ${cfgCost("ct", 2, "hour", "Cena za hodinu", "název, cena za hodinu, zapnuto")}
+    ${cfgNum("ct.hours", "Délka", "hodin", c.ct?.hours, "h", 0.5)}
     <div class="field"><label>Za termín<small>cena × délka</small></label><b class="num" style="text-align:right">${kc(court())}</b></div>
-    <div class="field wide"><label for="cf-skin">Vzhled</label><select id="cf-skin" data-cf="skin"><option value="beach" ${c.skin === "beach" ? "selected" : ""}>Beach</option><option value="tenis" ${c.skin === "tenis" ? "selected" : ""}>Tenis</option><option value="obecne" ${c.skin === "obecne" ? "selected" : ""}>Obecný</option></select></div>
-  </div>
-  ${c.model === "prepay" ? `<div class="panel"><h2>Předplacené období</h2><p class="sub">V tomto období stálí ${esc(ctName().toLowerCase())} neplatí, protože ho zaplatili dopředu. Mimo něj se dělí mezi všechny.</p>
-    ${t("prepFrom", "Od", c.prepFrom, "", "date")}${t("prepTo", "Do", c.prepTo, "", "date")}
-    ${f("prepay", "Předplatné na stálého", "za celé období", c.prepay, "Kč")}
-    <div class="field"><label>Kontrola předplatného<small>${ds.filter(inPrep).length} termínů × ${kc(court())} = ${kc(need)}<br>${st.length} stálých × ${kc(+c.prepay || 0)} = ${kc(st.length * (+c.prepay || 0))}</small></label>
-      <b class="num" style="text-align:right"><span class="${st.length * c.prepay >= need ? "paid" : "unpaid"}">${sign(st.length * (+c.prepay || 0) - need)}</span><br><small style="color:var(--muted);font-weight:500">férově ${kc(st.length ? Math.ceil(need / st.length) : 0)}</small></b></div>
+    ${cfgSelect("skin", "Vzhled", c.skin, { beach: "Beach", tenis: "Tenis", obecne: "Obecný" })}
+  </div>`;
+}
+function cfgPrepayPanel() {
+  const c = C();
+  if (c.model !== "prepay") return "";
+  const st = people().filter(p => p.g === "s"), paidN = st.filter(p => p.paid).length, terms = days().filter(inPrep).length;
+  const need = terms * court(), fee = +c.prepay || 0;
+  const amount = (sum, ok) => `<span class="${ok ? "paid" : "unpaid"}">${sum}</span>`;
+  return `<div class="panel"><h2>Předplacené období</h2>
+    <p class="sub">V tomto období stálí ${esc(ctName().toLowerCase())} neplatí, protože ho zaplatili dopředu. Mimo něj se dělí mezi všechny.</p>
+    ${cfgText("prepFrom", "Od", c.prepFrom, "", "date")}${cfgText("prepTo", "Do", c.prepTo, "", "date")}
+    ${cfgNum("prepay", "Předplatné na stálého", "za celé období", c.prepay, "Kč")}
+    <div class="field"><label>Kontrola předplatného<small>${terms} termínů × ${kc(court())} = ${kc(need)}<br>${st.length} stálých × ${kc(fee)} = ${kc(st.length * fee)}</small></label>
+      <b class="num" style="text-align:right">${amount(sign(st.length * fee - need), st.length * c.prepay >= need)}<br>
+        <small style="color:var(--muted);font-weight:500">férově ${kc(st.length ? Math.ceil(need / st.length) : 0)}</small></b></div>
     <div class="field"><label>Skutečně zaplaceno<small>${paidN}/${st.length} stálých, chybí: ${st.filter(p => !p.paid).sort(byName).map(p => esc(p.n)).join(", ") || "nikdo"}</small></label>
-      <b class="num" style="text-align:right"><span class="${paidN * c.prepay >= need ? "paid" : "unpaid"}">${kc(paidN * (+c.prepay || 0))}</span></b></div></div>` : ""}
-  <div class="panel"><h2>QR platba</h2>
-    ${t("iban", "Účet (IBAN)", c.iban, "bez mezer, např. CZ65…")}${t("msg", "Zpráva pro příjemce", c.msg)}
-  </div>
-  <div class="panel"><h2>Admin skupiny</h2><p class="sub">Skupina má jednoho admina, dalšího přidat nelze. Správce aplikace vidí vše.</p>
+      <b class="num" style="text-align:right">${amount(kc(paidN * fee), paidN * c.prepay >= need)}</b></div></div>`;
+}
+function cfgQrPanel() {
+  return `<div class="panel"><h2>QR platba</h2>
+    ${cfgText("iban", "Účet (IBAN)", C().iban, "bez mezer, např. CZ65…")}${cfgText("msg", "Zpráva pro příjemce", C().msg)}
+  </div>`;
+}
+function cfgAdminPanel() {
+  return `<div class="panel"><h2>Admin skupiny</h2><p class="sub">Skupina má jednoho admina, dalšího přidat nelze. Správce aplikace vidí vše.</p>
     <div class="field"><label>Admin</label><b style="text-align:right">${esc(P(D.group.admin_person)?.n || D.group.admin_name || "—")}</b></div>
-    <form id="pinChange" class="addform" style="margin-top:8px"><input id="newPin" inputmode="numeric" pattern="[0-9]{4,8}" placeholder="Nový PIN" aria-label="Nový PIN" required><button class="btn small" type="submit">Změnit PIN</button></form>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn small ghost" data-copylink>Kopírovat odkaz skupiny</button><button class="btn small ghost" data-logout>Odhlásit admina</button></div>
-  </div>
-  ${superPin() ? "" : superLogin()}`;
+    <form id="pinChange" class="addform" style="margin-top:8px"><input id="newPin" inputmode="numeric" pattern="[0-9]{4,8}" placeholder="Nový PIN" aria-label="Nový PIN" required>
+      <button class="btn small" type="submit">Změnit PIN</button></form>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn small ghost" data-copylink>Kopírovat odkaz skupiny</button>
+      <button class="btn small ghost" data-logout>Odhlásit admina</button></div>
+  </div>`;
 }
 function superLogin() {
   return `<details class="panel"><summary><b>Správce aplikace</b></summary>
@@ -570,13 +632,13 @@ document.addEventListener("click", async e => {
   if (b.hasAttribute("data-cancel")) { confirmDel = null; render(); return; }
   if (b.dataset.del) { const p = P(b.dataset.del); confirmDel = null; if (p.id == meId()) store.set("me:" + slug, null); await act("app_update_person", { p_slug: slug, p_person: p.id, p_patch: { active: false } }, `${p.n} odebrán(a). Historie zůstává.`); return; }
   if (b.dataset.move) { const p = P(b.dataset.move), g = p.g === "s" ? "z" : "s"; await act("app_update_person", { p_slug: slug, p_person: p.id, p_patch: { g } }, `${p.n} je teď ${g === "s" ? "stálý" : "záskok"}.`); return; }
-  if (b.dataset.paid) { const p = P(b.dataset.paid); const r = await act("app_set_paid", { p_slug: slug, p_pin: adminPin() || superPin(), p_person: p.id, p_paid: !p.paid }); if (r?.error === "pin") toast("Pro změnu předplatného se přihlaste jako admin v Nastavení."); return; }
+  if (b.dataset.paid) { const p = P(b.dataset.paid); const r = await act("app_set_paid", { p_slug: slug, p_pin: anyPin(), p_person: p.id, p_paid: !p.paid }); if (r?.error === "pin") toast("Pro změnu předplatného se přihlaste jako admin v Nastavení."); return; }
   if (b.dataset.wasend || b.dataset.wacopy) { const [d, k] = (b.dataset.wasend || b.dataset.wacopy).split("|"), m = waCards().find(x => x.d === d && x.k === k); if (!m) return;
     if (b.dataset.wacopy) { copy(m.text, "Text zkopírován"); return; }
     window.open("https://wa.me/?text=" + encodeURIComponent(m.text), "_blank"); waConfirm = `${d}|${k}`; render(); return; }
   if (b.hasAttribute("data-wano")) { waConfirm = null; render(); return; }
   if (b.dataset.wayes || b.dataset.waign) { const [d, k] = (b.dataset.wayes || b.dataset.waign).split("|"), ign = !!b.dataset.waign; waConfirm = null;
-    const r = await act("app_wa_mark", { p_slug: slug, p_day: d, p_kind: k, p_action: ign ? "ignored" : "sent", p_person: meId(), p_pin: ign ? adminPin() || superPin() : null }, ign ? "Zpráva ignorována" : "Díky, odesláno");
+    const r = await act("app_wa_mark", { p_slug: slug, p_day: d, p_kind: k, p_action: ign ? "ignored" : "sent", p_person: meId(), p_pin: ign ? anyPin() : null }, ign ? "Zpráva ignorována" : "Díky, odesláno");
     if (r?.error === "done") toast("Tuhle zprávu už mezitím odeslal někdo jiný."); else if (r?.error === "pin") toast("Ignorovat může jen admin.");
     return; }
   if (b.hasAttribute("data-goto-new")) { tab = "new"; render(); scrollTo(0, 0); return; }
@@ -606,7 +668,7 @@ document.addEventListener("change", async e => {
       const path = t.dataset.cf.split("."); let o = cfg; while (path.length > 1) { const k = path.shift(); o = o[k] ||= {}; }
       o[path[0]] = t.type === "checkbox" ? t.checked : t.type === "number" ? (t.value === "" ? 0 : +t.value) : t.value;
     }
-    const r = await act("app_save_cfg", { p_slug: slug, p_pin: adminPin() || superPin(), p_name: $("#gname")?.value || D.group.name, p_cfg: cfg, p_admin_email: null }, "Uloženo");
+    const r = await act("app_save_cfg", { p_slug: slug, p_pin: anyPin(), p_name: $("#gname")?.value || D.group.name, p_cfg: cfg, p_admin_email: null }, "Uloženo");
     if (r?.error === "pin") { store.set("pin:" + slug, null); toast("PIN už neplatí, přihlaste se znovu."); render(); }
   }
 });
@@ -635,11 +697,11 @@ document.addEventListener("submit", async e => {
     } catch (err) { toast(err.message); }
     return;
   }
-  if (f.id === "pinChange") { const r = await act("app_change_pin", { p_slug: slug, p_pin: adminPin() || superPin(), p_new: $("#newPin").value.trim() }, "PIN změněn"); if (r?.ok && adminPin()) store.set("pin:" + slug, $("#newPin").value.trim()); return; }
+  if (f.id === "pinChange") { const r = await act("app_change_pin", { p_slug: slug, p_pin: anyPin(), p_new: $("#newPin").value.trim() }, "PIN změněn"); if (r?.ok && adminPin()) store.set("pin:" + slug, $("#newPin").value.trim()); return; }
   if (f.dataset.resetform) { const s = f.dataset.resetform; await act("super_reset_pin", { p_pin: superPin(), p_slug: s, p_new: f.querySelector("input").value.trim() }, "PIN admina změněn. Sdělte mu ho."); resetFor = null; render(); return; }
   if (f.id === "newGroup") {
     const v = id => $("#" + id)?.value?.trim() || "";
-    const cfg = { type: ngType, title: v("ng-n"), coach: "", place: v("ng-where"), season: "", time: v("ng-time"), end: v("ng-end"), cap: +v("ng-cap") || 12,
+    const cfg = { type: ngType, coach: "", place: v("ng-where"), season: "", time: v("ng-time"), end: v("ng-end"), cap: +v("ng-cap") || 12,
       model: v("ng-model"), tr: { name: v("ng-trn") || "Trenér", price: +v("ng-trp") || 0, on: $("#ng-tro").checked },
       ct: { name: v("ng-ctn") || "Kurt", hour: +v("ng-ctp") || 0, hours: 1.5, on: $("#ng-cto").checked },
       prepFrom: "", prepTo: "", prepay: 0, iban: "", msg: "", skin: v("ng-skin") };

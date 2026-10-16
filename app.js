@@ -83,6 +83,8 @@ function pragueOffset(d) { // letní čas: poslední neděle v březnu až posle
 const atPrague = (d, t) => new Date(`${d}T${t || "00:00"}:00${pragueOffset(d)}`);
 const sessionStart = d => atPrague(d, C().time);
 const sessionEnd = d => atPrague(d, C().end || C().time);
+// Termín se 48 h po konci uzavře: odpovědi a cash pak mění jen admin (server to hlídá také, funkce day_locked).
+const dayClosed = d => !anyPin() && Date.now() > sessionEnd(d).getTime() + 48 * 3600e3;
 const priorityActive = d => Date.now() < sessionStart(d).getTime() - 24 * 3600e3;
 
 // ---------- výpočty ----------
@@ -121,7 +123,7 @@ async function load() {
   for (const x of D.days) cash[x.d] = x.cash;
   rememberGroup(slug, D.group.name, "active");
   try { wa = await api("app_wa_get", { p_slug: slug }); } catch { wa = null; }
-  if (superPin()) try { const r = await api("super_list", { p_pin: superPin() }); if (r.ok) superData = r; } catch {}
+  if (superPin()) try { const r = await api("super_list", { p_pin: superPin() }); if (r.ok) superData = r; else store.set("superpin", null); } catch {}
 }
 async function refresh() {
   if (!slug || busy) return;
@@ -224,11 +226,13 @@ function weekCard(d, label, isNow) {
   else if (s.zChci.length && priorityActive(d)) alert = `<div class="alert info">Volno: ${s.free} ${places(s.free)}. Přednost má ${esc(s.zChci[0].n)} (dřív klikl/a „šel bych“) až do 24 h před tréninkem. ${openTxt}</div>`;
   else alert = `<div class="alert info">Volno: ${s.free} ${places(s.free)}${s.zChci.length ? ". Místo dostane ten, kdo první dá ANO" : " pro záskok"}. ${openTxt}</div>`;
 
+  const closed = dayClosed(d);
   const seg = (p, st) => {
     const dis = st !== "ano" && !s.canAno(p) ? "disabled" : "";
-    return p.g === "s"
+    const html = p.g === "s"
       ? `<div class="seg" role="group" aria-label="${esc(p.n)}"><button class="ano" aria-pressed="${st === "ano"}" data-d="${d}" data-p="${p.id}" data-v="ano" ${dis}>ANO</button><button class="ne" aria-pressed="${st === "ne"}" data-d="${d}" data-p="${p.id}" data-v="ne">NE</button></div>`
       : `<div class="seg" role="group" aria-label="${esc(p.n)}"><button class="chci" aria-pressed="${st === "chci"}" data-d="${d}" data-p="${p.id}" data-v="chci">Šel bych</button><button class="ne" aria-pressed="${st === "ne"}" data-d="${d}" data-p="${p.id}" data-v="ne">NE</button><button class="ano" aria-pressed="${st === "ano"}" data-d="${d}" data-p="${p.id}" data-v="ano" ${dis}>ANO</button></div>`;
+    return closed ? html.replaceAll("<button ", "<button disabled ") : html;
   };
   const row = p => {
     const st = a[p.id]?.st; let note = "";
@@ -245,11 +249,12 @@ function weekCard(d, label, isNow) {
     <div class="week-h"><div><span class="badge ${isNow ? "now" : ""}">${label}</span><div class="date" style="margin-top:6px">${esc((C().dow || "").slice(0, 2).replace(/^./, c => c.toUpperCase()))} ${fmtD(d)}</div></div>
       <div class="cap"><small>${s.sAno.length} stálých + ${s.zAno.length} ${subs(s.zAno.length)}</small></div></div>
     <div class="courts" aria-hidden="true">${bars.join("")}</div>${alert}
+    ${closed ? `<div class="alert info">Termín je uzavřený (uplynuly 48 hodin po konci). Odpovědi může měnit jen admin.</div>` : ""}
     <div class="grp"><span>Ty</span><span>${m.g === "s" ? "stálý" : "záskok"}</span></div>${row(m)}
     <div class="grp" style="margin-top:6px"><span>Stálí${C().model === "prepay" ? " (předplacený " + esc(ctName().toLowerCase()) + ")" : ""}</span><span class="num">${s.sAno.length}× ANO</span></div>${st.map(row).join("")}
     <div class="grp" style="margin-top:6px"><span>Záskoky (legenda níže)</span><span class="num">${s.zAno.length}× ANO · ${s.zChci.length}× šel bych</span></div>${zs.map(row).join("")}
     <p class="legend"><b>Legenda:</b> Pro zájem o účast klikni „Šel bych“, zaznamená se pořadí. Jakmile je volné místo ze stálých, zvol ANO. Přednost má ten, kdo byl dřív v „Šel bych“.</p>
-    ${C().tr?.on ? `<div class="week-f"><label for="cash-${d}">Cash přinese</label><select id="cash-${d}" data-cash="${d}">${cashOpts}</select>
+    ${C().tr?.on ? `<div class="week-f"><label for="cash-${d}">Cash přinese</label><select id="cash-${d}" data-cash="${d}" ${closed ? "disabled" : ""}>${cashOpts}</select>
       <button class="btn small" data-gopay="${d}">Platba →</button></div>` : `<div class="week-f"><button class="btn small" data-gopay="${d}">Platba →</button></div>`}
   </article>`;
 }
@@ -262,7 +267,8 @@ function renderWeek() {
 }
 
 // ---------- platba ----------
-function spd(amount) { return `SPD*1.0*ACC:${C().iban}*AM:${amount.toFixed(2)}*CC:CZK*MSG:${(C().msg || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\*/g, "").slice(0, 60)}`; }
+const iban = () => String(C().iban || "").replace(/\s/g, "");
+function spd(amount) { return `SPD*1.0*ACC:${iban()}*AM:${amount.toFixed(2)}*CC:CZK*MSG:${(C().msg || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\*/g, "").slice(0, 60)}`; }
 function qrSvg(text) {
   try { const q = qrcode(0, "M"); q.addData(text); q.make(); return q.createSvgTag({ cellSize: 4, margin: 0, scalable: true }); }
   catch { return `<small style="color:#333">QR se nepodařilo vytvořit</small>`; }
@@ -334,12 +340,13 @@ function payWhoPanel({ s, c, tc }) {
   </div>`;
 }
 function payQrPanel({ s, c }) {
-  if (!c || !C().iban) return "";
+  if (!c || !iban()) return "";
   return `<div class="panel"><h2>QR platba: ${esc(ctName().toLowerCase())}</h2>
     <p class="sub">${s.prep ? "Pro záskoky." : "Pro všechny hráče."} Částka se dopočítá podle počtu hráčů.</p>
     <div class="qrwrap"><div class="qr">${qrSvg(spd(s.ct))}</div>
       <div class="qrinfo"><b class="num">${kc(s.ct)}</b><span>Zpráva: <i>${esc(C().msg)}</i></span>
-        <span class="acc">${esc(C().iban).replace(/(.{4})/g, "$1 ").trim()}</span>
+        <span class="acc">${esc(iban()).replace(/(.{4})/g, "$1 ").trim()}</span>
+        ${D.group.iban_changed ? `<small class="acc-changed">Účet naposledy změněn ${fmtD(iso(D.group.iban_changed))}. Zkontrolujte, že odpovídá účtu, který znáte.</small>` : ""}
         <button class="btn ghost small" id="copyAcc" style="align-self:flex-start">Kopírovat číslo účtu</button></div></div></div>`;
 }
 function seasonPanel() {
@@ -495,9 +502,9 @@ const cfgCost = (key, n, priceKey, priceLabel, sub) => { const x = C()[key]; ret
 
 function adminLoginPanel() {
   return `<div class="panel"><h2>Přihlášení admina</h2>
-    <p class="sub">${D.group.has_pin ? "Zadejte PIN admina skupiny." : "Skupina ještě nemá PIN. Zvolte si ho (4–8 číslic), bude potřeba pro změny nastavení."}</p>
+    <p class="sub">${D.group.has_pin ? "Zadejte PIN admina skupiny." : "Skupina ještě nemá PIN. Požádejte správce aplikace, aby vám ho nastavil."}</p>
     <form id="pinForm" class="addform"><input id="pinIn" inputmode="numeric" autocomplete="off" pattern="[0-9]{4,8}" placeholder="PIN" aria-label="PIN" required>
-      <button class="btn" type="submit">${D.group.has_pin ? "Přihlásit" : "Nastavit PIN"}</button></form>
+      <button class="btn" type="submit">Přihlásit</button></form>
     <p class="sub" style="margin:10px 0 0">Zapomenutý PIN obnoví správce aplikace.</p></div>`;
 }
 function cfgGroupPanel() {
@@ -547,6 +554,8 @@ function cfgQrPanel() {
 function cfgAdminPanel() {
   return `<div class="panel"><h2>Admin skupiny</h2><p class="sub">Skupina má jednoho admina, dalšího přidat nelze. Správce aplikace vidí vše.</p>
     <div class="field"><label>Admin</label><b style="text-align:right">${esc(P(D.group.admin_person)?.n || D.group.admin_name || "—")}</b></div>
+    <div class="field wide"><label for="adminMail">E-mail admina<small>${D.group.has_email ? "uložen, nový ho přepíše" : "zatím chybí"}. Nikdo ho nevidí, uvidí ho jen správce aplikace.</small></label>
+      <input id="adminMail" type="email" maxlength="120" placeholder="${D.group.has_email ? "••••••@••••" : "e-mail"}"></div>
     <form id="pinChange" class="addform" style="margin-top:8px"><input id="newPin" inputmode="numeric" pattern="[0-9]{4,8}" placeholder="Nový PIN" aria-label="Nový PIN" required>
       <button class="btn small" type="submit">Změnit PIN</button></form>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn small ghost" data-copylink>Kopírovat odkaz skupiny</button>
@@ -556,7 +565,7 @@ function cfgAdminPanel() {
 function superLogin() {
   return `<details class="panel"><summary><b>Správce aplikace</b></summary>
     <form id="superForm" class="addform" style="margin-top:10px"><input id="superIn" inputmode="numeric" pattern="[0-9]{4,8}" placeholder="PIN správce" aria-label="PIN správce" required autocomplete="off"><button class="btn small" type="submit">Přihlásit</button></form>
-    <p class="sub" style="margin:8px 0 0">Při úplně prvním přihlášení se zadaný PIN uloží jako PIN správce.</p></details>`;
+    <p class="sub" style="margin:8px 0 0">Po 5 chybných PINech za sebou se přihlášení na 15 minut zamkne.</p></details>`;
 }
 function superPanel() {
   if (!superPin()) return "";
@@ -597,8 +606,8 @@ function renderNew() {
         <div class="costrow"><input id="ng-trn" value="Trenér" aria-label="Název položky 1"><input id="ng-trp" type="number" value="0" aria-label="Cena položky 1"><label class="sw"><input id="ng-tro" type="checkbox"> zapnuto</label></div>
         <div class="costrow"><input id="ng-ctn" value="Kurt" aria-label="Název položky 2"><input id="ng-ctp" type="number" value="0" aria-label="Cena za hodinu"><label class="sw"><input id="ng-cto" type="checkbox" checked> zapnuto</label></div></div>
       <div class="field wide"><label for="ng-skin">Vzhled</label><select id="ng-skin"><option value="beach">Beach</option><option value="tenis">Tenis</option><option value="obecne" selected>Obecný</option></select></div>
-      <div class="field wide"><label for="ng-mail">Váš e-mail<small>nepovinné, pro budoucí upozornění</small></label><input id="ng-mail" type="email" placeholder="vas@email.cz"></div>
-      <div class="field"><label for="ng-pin">PIN admina<small>4–8 číslic</small></label><input id="ng-pin" inputmode="numeric" pattern="[0-9]{4,8}" required></div>
+      <div class="field wide"><label for="ng-mail">Váš e-mail<small>povinné, správce vám na něj odpoví</small></label><input id="ng-mail" type="email" placeholder="vas@email.cz" required maxlength="120"></div>
+      <div class="field"><label for="ng-pin">PIN admina<small>4–8 číslic, znáte ho jen vy</small></label><input id="ng-pin" inputmode="numeric" pattern="[0-9]{4,8}" required></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" type="submit">Odeslat žádost ke schválení</button><button class="btn ghost" type="button" data-cancelnew>Zpět</button></div>
     </form></div>`;
 }
@@ -614,14 +623,15 @@ document.addEventListener("click", async e => {
   if (b.dataset.iam) { store.set("me:" + slug, +b.dataset.iam); tab = "week"; render(); return; }
   if (b.dataset.v) {
     const d = b.dataset.d, pid = +b.dataset.p, v = b.dataset.v, cur = att[d]?.[pid]?.st, p = P(pid);
-    const r = await act("app_set_status", { p_slug: slug, p_person: pid, p_day: d, p_status: cur === v ? null : v });
-    if (r?.error === "full") toast(p.g === "z" ? "Plno. Klikni „Šel bych“, ať máš pořadí, až se uvolní místo." : "Plno. Místo už obsadil záskok, který potvrdil dřív.");
+    const r = await act("app_set_status", { p_slug: slug, p_person: pid, p_day: d, p_status: cur === v ? null : v, p_pin: anyPin() });
+    if (r?.error === "locked") toast("Termín je uzavřený, odpovědi může měnit jen admin.");
+    else if (r?.error === "full") toast(p.g === "z" ? "Plno. Klikni „Šel bych“, ať máš pořadí, až se uvolní místo." : "Plno. Místo už obsadil záskok, který potvrdil dřív.");
     else if (r?.error === "priority") toast(`Přednost má ${r.name}, klikl/a „šel bych“ dřív.`);
     else if (r?.ok && cur !== v && v === "ano" && p.g === "z") toast(`${p.n} jde hrát.`);
     return;
   }
   if (b.dataset.gopay) { payDay = b.dataset.gopay; tab = "pay"; render(); scrollTo(0, 0); return; }
-  if (b.id === "copyAcc") { copy(C().iban, "Číslo účtu zkopírováno"); return; }
+  if (b.id === "copyAcc") { copy(iban(), "Číslo účtu zkopírováno"); return; }
   if (b.hasAttribute("data-copylink")) { copy(location.origin + location.pathname + "?g=" + slug, "Odkaz zkopírován, pošlete ho skupině."); return; }
   if (b.dataset.ng) { addG = b.dataset.ng; render(); return; }
   if (b.dataset.ngt) { ngType = b.dataset.ngt; render(); return; }
@@ -660,7 +670,8 @@ document.addEventListener("change", async e => {
   if (t.id === "grp") { if (t.value === "__new") { tab = "new"; render(); scrollTo(0, 0); } else if (t.value && t.value !== slug) location.search = "?g=" + encodeURIComponent(t.value); return; }
   if (t.id === "me") { store.set("me:" + slug, +t.value); render(); return; }
   if (t.id === "payDay") { payDay = t.value; render(); return; }
-  if (t.dataset.cash) { await act("app_set_cash", { p_slug: slug, p_day: t.dataset.cash, p_person: +t.value || null }); return; }
+  if (t.dataset.cash) { const r = await act("app_set_cash", { p_slug: slug, p_day: t.dataset.cash, p_person: +t.value || null, p_pin: anyPin() }); if (r?.error === "locked") toast("Termín je uzavřený, cash může měnit jen admin."); return; }
+  if (t.id === "adminMail") { await act("app_save_cfg", { p_slug: slug, p_pin: anyPin(), p_name: null, p_cfg: null, p_admin_email: t.value.trim() }, "E-mail uložen"); return; }
   if (t.id === "superMail") { await act("super_set_email", { p_pin: superPin(), p_email: t.value }, "Uloženo"); superData = null; render(); return; }
   if (t.dataset.cf || t.hasAttribute("data-gname")) {
     const cfg = JSON.parse(JSON.stringify(C()));
@@ -685,15 +696,15 @@ document.addEventListener("submit", async e => {
   if (f.id === "pinForm") {
     const pin = $("#pinIn").value.trim();
     try { const r = await api("app_admin_check", { p_slug: slug, p_pin: pin });
-      if (r.ok) { if (r.super) store.set("superpin", pin); else store.set("pin:" + slug, pin); toast(r.created ? "PIN nastaven, jste přihlášen(a) jako admin." : "Přihlášeno"); await load(); render(); }
-      else toast("Špatný PIN");
+      if (r.ok) { if (r.super) store.set("superpin", pin); else store.set("pin:" + slug, pin); toast("Přihlášeno"); await load(); render(); }
+      else toast(D.group.has_pin ? "Špatný PIN" : "Skupina ještě nemá PIN, požádejte správce aplikace.");
     } catch (err) { toast(err.message); }
     return;
   }
   if (f.id === "superForm") {
     const pin = $("#superIn").value.trim();
     try { const r = await api("super_check", { p_pin: pin });
-      if (r.ok) { store.set("superpin", pin); superData = null; toast(r.created ? "PIN správce nastaven." : "Přihlášeno jako správce"); render(); } else toast("Špatný PIN správce");
+      if (r.ok) { store.set("superpin", pin); superData = null; toast("Přihlášeno jako správce"); render(); } else toast(r.error === "no_pin" ? "PIN správce ještě není nastavený. Nastavte ho v databázi (návod v README)." : "Špatný PIN správce");
     } catch (err) { toast(err.message); }
     return;
   }
@@ -709,7 +720,7 @@ document.addEventListener("submit", async e => {
     else cfg.date = v("ng-date");
     if (cfg.time && cfg.end) { const [a, b] = [cfg.time, cfg.end].map(x => +x.slice(0, 2) + +x.slice(3) / 60); if (b > a) cfg.ct.hours = Math.round((b - a) * 4) / 4; }
     try {
-      const r = await api("app_request_group", { p_name: v("ng-n"), p_cfg: cfg, p_admin_name: v("ng-me"), p_admin_email: v("ng-mail") || null, p_pin: v("ng-pin") });
+      const r = await api("app_request_group", { p_name: v("ng-n"), p_cfg: cfg, p_admin_name: v("ng-me"), p_admin_email: v("ng-mail"), p_pin: v("ng-pin") });
       rememberGroup(r.slug, v("ng-n"), "pending");
       location.search = "?g=" + encodeURIComponent(r.slug);
     } catch (err) { toast(err.message); }

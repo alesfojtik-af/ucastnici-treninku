@@ -1,5 +1,5 @@
 
-/* Layout: one phone-width column; beach header (sky, sun, net) on top, sticky week bar, bottom tab bar. Desktop shows the same column centered. */
+/* Vzhled: jeden sloupec široký jako telefon (na počítači vycentrovaný), nahoře plážová hlavička (obloha, slunce, síť), lepicí lišta týdne a dole lišta záložek. */
 :root{
   --sand:#F6EBD7; --sand-2:#EBD9B8; --card:#FFFDF8; --ink:#1E2A2E; --muted:#6B6A5F;
   --sea:#0B7A86; --sea-2:#0F96A3; --sky:#BFE6EC; --sun:#F4A51C; --coral:#D9512C; --palm:#2E8B57;
@@ -233,3 +233,5 @@ html{scroll-behavior:smooth}
 .adminlogin{margin-top:8px;display:flex;flex-direction:column;gap:12px}
 .adminlogin>summary{cursor:pointer;color:var(--muted);font-size:13px;text-align:center}
 .adminlogin[open]>summary{margin-bottom:12px}
+
+.acc-changed{display:block;color:var(--warn,#b45309);font-size:12px;line-height:1.35}

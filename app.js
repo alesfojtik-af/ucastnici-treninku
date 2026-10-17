@@ -389,9 +389,9 @@ function renderPeople() {
 }
 
 // ---------- zprávy do WhatsAppu ----------
-// Karty se počítají z dat: status od neděle 20:00 před termínem do začátku, pak změny proti poslednímu odeslání,
-// platba 5 minut po konci, dokud ji někdo neodešle (nejdéle do nedělního statusu na další termín).
-function statusFrom(d) { const dow = new Date(d + "T12:00:00Z").getUTCDay(), sun = iso(Date.parse(d + "T12:00:00Z") - (dow || 7) * DAY); return atPrague(sun, "20:00"); }
+// Karty se počítají z dat: status 48 hodin před začátkem termínu do začátku, pak změny proti poslednímu odeslání,
+// platba 5 minut po konci, dokud ji někdo neodešle (nejdéle do statusu na další termín).
+const statusFrom = d => new Date(sessionStart(d).getTime() - 48 * 3600e3);
 const waLog = (d, ...k) => (wa || []).filter(x => x.d === d && k.includes(x.k));
 const dayLabel = d => `${C().type === "once" ? "" : (C().dow || "") + " "}${fmtD(d)}`.trim();
 const dayUrl = d => `${location.origin}${location.pathname}?g=${encodeURIComponent(slug)}&d=${d}`;
@@ -444,7 +444,7 @@ function waCards() {
   ds.forEach((d, i) => {
     const start = sessionStart(d).getTime();
     if (now >= statusFrom(d).getTime() && now < start) {
-      if (!waLog(d, "status").length) out.push({ d, k: "status", ic: "📋", title: "Nedělní status", sub: `na ${dayLabel(d)}`, text: statusText(d) });
+      if (!waLog(d, "status").length) out.push({ d, k: "status", ic: "📋", title: "Status termínu", sub: `na ${dayLabel(d)}`, text: statusText(d) });
       else { const ch = changesOf(d); if (ch.length) out.push({ d, k: "changes", ic: "🔄", title: "Změny od posledního odeslání", sub: `${dayLabel(d)} · ${ch.length} ${plural(ch.length, "změna", "změny", "změn")}`, text: changesText(d, ch) }); }
     }
     const until = i + 1 < ds.length ? statusFrom(ds[i + 1]).getTime() : sessionEnd(d).getTime() + 7 * DAY;
@@ -455,7 +455,7 @@ function waCards() {
 }
 function msgsPanel(admin) {
   if (wa === null) return `<div class="panel"><h2>Zprávy do WhatsAppu</h2><p class="sub" style="margin:0">Zprávy zatím nejsou zapnuté. Admin musí v databázi spustit aktualizaci (migrace 002).</p></div>`;
-  const cards = waCards(), kindName = { status: "Nedělní status", changes: "Změny", pay: "Platba" };
+  const cards = waCards(), kindName = { status: "Status termínu", changes: "Změny", pay: "Platba" };
   const recent = (wa || []).filter(x => Date.now() - Date.parse(x.at) < 7 * DAY).slice(-3).reverse();
   return `<div class="panel"><h2>Zprávy do WhatsAppu ${cards.length ? `<span class="cnt">${cards.length}</span>` : ""}</h2>
     <p class="sub">Poslat může kdokoli. Ťukněte na <b>Poslat do WhatsAppu</b>, vyberte skupinu a odešlete. Jakmile potvrdíte odeslání, zpráva zmizí i ostatním.</p>
@@ -468,10 +468,10 @@ function msgsPanel(admin) {
     </article>`; }).join("") : `<p class="sub" style="margin:0">Teď není nic k odeslání. 👌</p>`}
     ${recent.length ? `<h3>Naposledy</h3>${recent.map(x => `<p class="sub done">✓ ${kindName[x.k]} ${fmtD(x.d)} · ${x.a === "sent" ? "odeslal(a) " + esc(P(x.p)?.n || "někdo") : "ignorováno"} · ${new Date(x.at).toLocaleString("cs-CZ", { weekday: "short", hour: "2-digit", minute: "2-digit" })}</p>`).join("")}` : ""}
     <details class="later"><summary>Kdy se co objeví</summary><ol class="tl">
-      <li><b>Neděle 20:00 před termínem</b><span>Nedělní status. Dřív se pro termín nic nechystá.</span></li>
+      <li><b>48 hodin před začátkem</b><span>Status termínu. Dřív se pro termín nic nechystá.</span></li>
       <li><b>Po odeslání statusu až do začátku</b><span>Změny přihlášek se sčítají do jedné karty „Změny“.</span></li>
       <li><b>Začátek termínu</b><span>Neodeslaný status a změny k termínu zmizí.</span></li>
-      <li><b>5 minut po konci</b><span>Platba za termín. Zůstane, dokud ji někdo neodešle, nejdéle do nedělního statusu na další termín.</span></li>
+      <li><b>5 minut po konci</b><span>Platba za termín. Zůstane, dokud ji někdo neodešle, nejdéle do statusu na další termín.</span></li>
     </ol></details></div>`;
 }
 function renderSettings() {

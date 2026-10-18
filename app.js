@@ -389,9 +389,9 @@ function renderPeople() {
 }
 
 // ---------- zprávy do WhatsAppu ----------
-// Karty se počítají z dat: status od neděle 20:00 před termínem do začátku, pak změny proti poslednímu odeslání,
+// Karty se počítají z dat: status od 48 h před začátkem termínu do začátku, pak změny proti poslednímu odeslání,
 // platba 5 minut po konci, dokud ji někdo neodešle (nejdéle do nedělního statusu na další termín).
-function statusFrom(d) { const dow = new Date(d + "T12:00:00Z").getUTCDay(), sun = iso(Date.parse(d + "T12:00:00Z") - (dow || 7) * DAY); return atPrague(sun, "20:00"); }
+const statusFrom = d => new Date(sessionStart(d).getTime() - 48 * 3600e3); // u úterý 7:00 je to neděle 7:00
 const waLog = (d, ...k) => (wa || []).filter(x => x.d === d && k.includes(x.k));
 const dayLabel = d => `${C().type === "once" ? "" : (C().dow || "") + " "}${fmtD(d)}`.trim();
 const dayUrl = d => `${location.origin}${location.pathname}?g=${encodeURIComponent(slug)}&d=${d}`;
@@ -468,7 +468,7 @@ function msgsPanel(admin) {
     </article>`; }).join("") : `<p class="sub" style="margin:0">Teď není nic k odeslání. 👌</p>`}
     ${recent.length ? `<h3>Naposledy</h3>${recent.map(x => `<p class="sub done">✓ ${kindName[x.k]} ${fmtD(x.d)} · ${x.a === "sent" ? "odeslal(a) " + esc(P(x.p)?.n || "někdo") : "ignorováno"} · ${new Date(x.at).toLocaleString("cs-CZ", { weekday: "short", hour: "2-digit", minute: "2-digit" })}</p>`).join("")}` : ""}
     <details class="later"><summary>Kdy se co objeví</summary><ol class="tl">
-      <li><b>Neděle 20:00 před termínem</b><span>Nedělní status. Dřív se pro termín nic nechystá.</span></li>
+      <li><b>48 hodin před začátkem</b><span>Nedělní status. Dřív se pro termín nic nechystá.</span></li>
       <li><b>Po odeslání statusu až do začátku</b><span>Změny přihlášek se sčítají do jedné karty „Změny“.</span></li>
       <li><b>Začátek termínu</b><span>Neodeslaný status a změny k termínu zmizí.</span></li>
       <li><b>5 minut po konci</b><span>Platba za termín. Zůstane, dokud ji někdo neodešle, nejdéle do nedělního statusu na další termín.</span></li>

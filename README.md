@@ -19,7 +19,7 @@ Seznam v jedné větě, aby šlo rychle najít, kde se co děje (`app.js` = web,
 | Trenér se dělí mezi všechna ANO, nahoru na celé koruny. Kurt nahoru na desetikoruny, přebytek jde do kasy | `stats` |
 | V předplaceném období platí kurt jen záskoci | `stats` (`ctOf`) |
 | Termín se 48 h po konci uzavře, měnit ho pak smí jen admin | `day_locked`, `dayClosed` |
-| Zprávy do WhatsAppu: status nejdřív v neděli 20:00 před termínem, platba 5 minut po konci | `waCards` |
+| Zprávy do WhatsAppu: status nejdřív 48 h před začátkem (út 7:00 → ne 7:00), platba 5 minut po konci | `waCards` |
 | PIN: 4–8 číslic, po 5 chybách za sebou se na 15 minut zamkne | `pin_fail`, `is_admin`, `super_login` |
 | Číslo účtu musí být platný IBAN, každá změna účtu a textu platby se zapíše do historie a u QR se ukáže datum změny | `app_save_cfg`, `cfg_history` |
 
